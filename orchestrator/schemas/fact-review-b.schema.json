@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://claude-code-course.local/schemas/fact-review-b.schema.json",
+  "title": "Fact Review Stage B — Comparative Review Result",
+  "description": "Schema for the DeepSeek comparative fact review (Stage B) output. The reviewer compares their Stage A findings against Codex claims.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "review_type",
+    "unit_id",
+    "attempt",
+    "status",
+    "claim_reviews",
+    "verdict",
+    "recommended_risk"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for forward compatibility.",
+      "examples": ["1.0"]
+    },
+    "review_type": {
+      "type": "string",
+      "const": "fact-review-b",
+      "description": "Fixed identifier for this review type."
+    },
+    "unit_id": {
+      "type": "string",
+      "description": "Unit identifier, e.g. M03.",
+      "pattern": "^M\\d{2}$"
+    },
+    "attempt": {
+      "type": "integer",
+      "description": "Attempt number (1-based).",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "needs_adjudication", "needs_retry"],
+      "description": "Review status: complete (all claims reviewed), needs_adjudication (conflicts require Codex ruling), needs_retry (significant issues require another review cycle)."
+    },
+    "claim_reviews": {
+      "type": "array",
+      "description": "Review of each Codex claim, compared against Stage A findings.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "issue_id",
+          "claim_id",
+          "result",
+          "severity",
+          "category",
+          "finding",
+          "evidence_refs"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "description": "Unique identifier for this review issue."
+          },
+          "claim_id": {
+            "type": "string",
+            "description": "Reference to the Codex claim being reviewed."
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "consistent",
+              "omission",
+              "conflict",
+              "error",
+              "insufficient_evidence",
+              "version_confusion"
+            ],
+            "description": "Verdict for this specific claim."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "cosmetic"],
+            "description": "Severity of the finding."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "mechanism",
+              "call_chain",
+              "data_flow",
+              "state_ownership",
+              "concurrency",
+              "boundary",
+              "lifecycle",
+              "security",
+              "terminology"
+            ],
+            "description": "Category of the finding."
+          },
+          "finding": {
+            "type": "string",
+            "description": "Detailed explanation of the finding."
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "References to evidence supporting this review."
+          },
+          "codex_claim_summary": {
+            "type": "string",
+            "description": "Brief restatement of the Codex claim being reviewed."
+          },
+          "stage_a_finding_ref": {
+            "type": "string",
+            "description": "Reference to the related Stage A finding, if any."
+          },
+          "suggested_correction": {
+            "type": "string",
+            "description": "If result is error/conflict/omission, suggested correction."
+          }
+        }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "description": "Overall review verdict.",
+      "required": ["outcome", "summary"],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["approved", "approved_with_suggestions", "revision_required", "rejected"],
+          "description": "Overall outcome for this unit's fact review."
+        },
+        "summary": {
+          "type": "string",
+          "description": "One paragraph summary of the comparative review."
+        },
+        "key_differences": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Most important differences found between Stage A and Codex claims."
+        }
+      }
+    },
+    "recommended_risk": {
+      "type": "string",
+      "enum": ["R1", "R2", "R3", "R4"],
+      "description": "Recommended risk level after review. Can only be higher than (or equal to) the initial risk level."
+    },
+    "adjudication_required": {
+      "type": "array",
+      "description": "Issues that require Codex adjudication (unresolvable by reviewer).",
+      "items": {
+        "type": "object",
+        "required": ["issue_ref", "question", "positions"],
+        "properties": {
+          "issue_ref": { "type": "string" },
+          "question": { "type": "string" },
+          "positions": {
+            "type": "object",
+            "properties": {
+              "stage_a_position": { "type": "string" },
+              "codex_position": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

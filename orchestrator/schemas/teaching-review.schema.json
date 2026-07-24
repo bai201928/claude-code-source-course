@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://claude-code-course.local/schemas/teaching-review.schema.json",
+  "title": "Teaching Review Result",
+  "description": "Schema for the DeepSeek teaching review output. Reviews pedagogical quality for a TypeScript beginner learner.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "review_type",
+    "unit_id",
+    "attempt",
+    "verdict",
+    "severity",
+    "issues"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for forward compatibility.",
+      "examples": ["1.0"]
+    },
+    "review_type": {
+      "type": "string",
+      "const": "teaching-review",
+      "description": "Fixed identifier for this review type."
+    },
+    "unit_id": {
+      "type": "string",
+      "description": "Unit identifier, e.g. M03.",
+      "pattern": "^M\\d{2}$"
+    },
+    "attempt": {
+      "type": "integer",
+      "description": "Attempt number (1-based).",
+      "minimum": 1,
+      "maximum": 2
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["approved", "approved_with_suggestions", "revision_required", "rejected"],
+      "description": "Overall teaching quality verdict."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["clean", "minor_issues", "major_issues", "severe_issues"],
+      "description": "Highest severity level found across all issues."
+    },
+    "issues": {
+      "type": "array",
+      "description": "List of teaching quality issues found.",
+      "items": {
+        "type": "object",
+        "required": [
+          "issue_id",
+          "category",
+          "location",
+          "problem",
+          "learner_impact",
+          "suggested_fix"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string",
+            "description": "Unique identifier for this issue."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "function_dump",
+              "cognitive_leap",
+              "diagram_text_mismatch",
+              "code_not_self_explanatory",
+              "missing_why",
+              "missing_how",
+              "missing_failure_modes",
+              "typescript_prerequisite_gap",
+              "java_analogy_inaccurate",
+              "python_analogy_inaccurate",
+              "experiment_mismatch",
+              "pacing",
+              "clarity",
+              "structural"
+            ],
+            "description": "Category of the teaching issue."
+          },
+          "location": {
+            "type": "object",
+            "description": "Where in the teaching material the issue occurs.",
+            "properties": {
+              "section": { "type": "string" },
+              "paragraph": { "type": "string" },
+              "line_reference": { "type": "string" }
+            }
+          },
+          "problem": {
+            "type": "string",
+            "description": "Specific description of what is wrong."
+          },
+          "learner_impact": {
+            "type": "string",
+            "description": "How this issue would affect the target learner's understanding."
+          },
+          "suggested_fix": {
+            "type": "string",
+            "description": "Actionable suggestion for fixing the issue."
+          },
+          "needs_source_check": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether this issue might be rooted in a factual error that requires source verification."
+          },
+          "source_check_request": {
+            "type": "object",
+            "description": "If needs_source_check is true, minimal source request details.",
+            "properties": {
+              "suspected_error": { "type": "string" },
+              "source_file_needed": { "type": "string" },
+              "symbol_needed": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "positive_notes": {
+      "type": "array",
+      "description": "Things the material does well pedagogically.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "aspect": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "description": "One paragraph summary of the teaching review."
+    }
+  },
+  "additionalProperties": false
+}

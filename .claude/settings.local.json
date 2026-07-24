@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "TaskCreate",
+      "TaskUpdate",
+      "TaskDelete",
+      "ExitPlanMode",
+      "EnterPlanMode",
+      "NotebookEdit"
+    ],
+    "deny": [],
+    "additionalDirectories": ["D:\\agent\\Claude code最新"]
+  },
+  "skipDangerousModePermissionPrompt": true
+}

@@ -1,0 +1,94 @@
+# 风险等级定义与审查规则
+#
+# 风险等级只能升级，不允许自动降级。
+# 升级由审查结果驱动（阶段B裁决或教学审查发现严重问题）。
+# 审查者可以建议降级，但最终决定权在Codex（主裁决者）。
+
+risk_levels:
+  R1:
+    label: "局部·纯函数·证据完整"
+    description:
+      - 单个模块或单一函数的内部实现
+      - 无跨模块副作用
+      - 无异步或状态变化
+      - 源码证据充分，调用链清晰
+      - 无并发、无持久化、无权限相关代码
+    review_requirements:
+      fact_review: optional          # 可以跳过事实审查
+      teaching_review: optional      # 可以跳过教学审查
+      experiment: optional           # 不需要强制运行实验
+    examples:
+      - 纯字符串工具函数
+      - 简单的类型定义文件
+      - 常量配置文件
+
+  R2:
+    label: "跨模块·异常分支·状态变化"
+    description:
+      - 跨两个以上模块的调用链
+      - 涉及异常处理、边界条件
+      - 涉及状态变化但不跨进程
+      - 涉及条件分支但路径有限
+    review_requirements:
+      fact_review: required          # 至少一次事实审查
+      teaching_review: required      # 至少一次教学审查
+      experiment: recommended        # 建议运行验证实验
+    examples:
+      - CLI参数解析与验证
+      - 消息模型转换
+      - 单文件工具实现
+
+  R3:
+    label: "并发·取消·压缩·权限·持久化·多Agent"
+    description:
+      - 涉及异步并发、信号、取消令牌
+      - 涉及上下文压缩/摘要/裁剪
+      - 涉及权限检查、沙箱边界
+      - 涉及持久化读写、状态恢复
+      - 涉及多Agent通信协作
+    review_requirements:
+      fact_review: required          # 至少两次独立事实审查
+      teaching_review: required      # 至少两次教学审查
+      experiment: required           # 必须有运行实验
+      failure_injection: required    # 必须有失败注入或反例
+    examples:
+      - QueryEngine核心循环
+      - 上下文压缩管道
+      - 权限确认流程
+      - 多Agent任务编排
+
+  R4:
+    label: "核心调用链·状态所有权·安全·恢复·证据冲突"
+    description:
+      - 系统核心调用链的入口/出口
+      - 关键状态的所有权和生命周期
+      - 安全敏感路径（认证、凭据、沙箱逃逸）
+      - 崩溃恢复、中断续传
+      - 多个证据来源冲突、无法确认
+    review_requirements:
+      fact_review: required          # 至少两次事实审查，必须包含A/B两阶段
+      teaching_review: required      # 至少两次教学审查
+      experiment: required           # 必须有运行实验和失败注入
+      codex_adjudication: required   # Codex必须做出最终裁决
+    examples:
+      - 主事件循环的完整调用链
+      - 凭据管理与沙箱隔离
+      - 会话恢复的完整流程
+      - 内存文件系统权限边界
+
+# 升级规则：审查过程中根据发现的问题自动或手动升级
+escalation_rules:
+  - trigger: "跨模块依赖未在初评中识别"
+    action: "R1 → R2"
+  - trigger: "发现异步/并发/持久化代码路径"
+    action: "R1 → R3 或 R2 → R3"
+  - trigger: "发现安全敏感或恢复敏感路径"
+    action: "任意等级 → R4"
+  - trigger: "事实审查发现证据冲突无法一次解决"
+    action: "任意等级 → R4"
+  - trigger: "阶段B裁决发现Codex结论与审查结论严重冲突"
+    action: "任意等级 → R4"
+
+# 禁止：自动降级
+# 只有用户主动要求或Codex基于用户明确反馈才能降级
+downgrade_policy: "manual_only"

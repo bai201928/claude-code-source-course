@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://claude-code-course.local/schemas/knowledge-base.schema.json",
+  "title": "Knowledge Base Entry",
+  "description": "Schema for a single entry in the global curriculum knowledge base — tracking terminology, symbol mapping, evidence, and revision history.",
+  "type": "object",
+  "required": [
+    "knowledge_id",
+    "term",
+    "source_symbol",
+    "teaching_alias",
+    "responsibility",
+    "status",
+    "source_unit",
+    "evidence_status"
+  ],
+  "properties": {
+    "knowledge_id": {
+      "type": "string",
+      "description": "Globally unique identifier for this knowledge entry, e.g. KB-042."
+    },
+    "term": {
+      "type": "string",
+      "description": "Canonical term (usually the teaching alias or a neutral name)."
+    },
+    "source_symbol": {
+      "type": "string",
+      "description": "The actual symbol name in the TypeScript source code, e.g. QueryEngine.query."
+    },
+    "teaching_alias": {
+      "type": "string",
+      "description": "Simplified name used for teaching, e.g. '查询引擎'. Must be consistent across all units."
+    },
+    "responsibility": {
+      "type": "string",
+      "description": "One-sentence description of what this component/function/concept is responsible for."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["confirmed", "inferred", "unconfirmed", "deprecated", "superseded"],
+      "description": "Confirmation status of this knowledge entry."
+    },
+    "source_unit": {
+      "type": "string",
+      "pattern": "^M\\d{2}$",
+      "description": "The unit ID where this knowledge was first introduced and confirmed."
+    },
+    "evidence_status": {
+      "type": "string",
+      "enum": [
+        "source_confirmed",
+        "test_confirmed",
+        "inferred_from_behavior",
+        "inferred_from_context",
+        "unconfirmed"
+      ],
+      "description": "Level of evidence backing this entry."
+    },
+    "depends_on": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of knowledge_ids that this entry depends on.",
+      "uniqueItems": true
+    },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of knowledge_ids that this entry supersedes.",
+      "uniqueItems": true
+    },
+    "references": {
+      "type": "array",
+      "description": "Source references for this knowledge.",
+      "items": {
+        "type": "object",
+        "required": ["type", "location"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["source_file", "test_file", "config_file", "package_json", "tsconfig", "external_doc"]
+          },
+          "location": { "type": "string", "description": "File path and optional line range." },
+          "symbol": { "type": "string", "description": "Specific symbol within the location." },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "used_in_units": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^M\\d{2}$" },
+      "description": "All unit IDs that reference or depend on this knowledge.",
+      "uniqueItems": true
+    },
+    "revisions": {
+      "type": "array",
+      "description": "Revision history for this entry.",
+      "items": {
+        "type": "object",
+        "required": ["version", "date", "change"],
+        "properties": {
+          "version": { "type": "integer", "description": "Revision version number, starting at 1." },
+          "date": { "type": "string", "format": "date", "description": "Date of the revision (ISO 8601 date)." },
+          "change": { "type": "string", "description": "What changed and why." },
+          "affected_units": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^M\\d{2}$" },
+            "description": "Units that needed updating due to this revision."
+          },
+          "triggered_by": {
+            "type": "string",
+            "description": "What triggered this revision (review finding, user feedback, etc.)."
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Additional notes, caveats, or context."
+    }
+  },
+  "additionalProperties": false
+}

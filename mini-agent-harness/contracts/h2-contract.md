@@ -2,7 +2,7 @@
 
 版本：`H2-in-progress`
 
-当前来源单元：M10、M11、M12，以及用户批准的 S0/S1 核心纵切升级。S2 尚未完成；本文件冻结已经验证并合入累计 Harness 的消息所有权、请求投影、Provider 边界、单 Agent Tool Loop 和运行通道分层。流式聚合、完整 Context Pipeline 与并发 Tool 调度仍由后续单元演进。
+当前来源单元：M10、M11、M12、M13，以及用户批准的 S0/S1 核心纵切升级。S2 尚未完成；本文件冻结已经验证并合入累计 Harness 的消息所有权、请求投影、Provider 边界、单 Agent Tool Loop 和运行通道分层。流式聚合、完整 Context Pipeline 与并发 Tool 调度仍由后续单元演进。
 
 ## M10 消息与会话不变量
 
@@ -43,6 +43,17 @@
 71. 本阶段不只为模仿 Claude Code 把稳定 `Promise<AgentRunSummary> + AgentEventSink` 改写为 `AsyncGenerator`。Pull-based `AgentRunStream` 延后到 M14，并必须同时定义有限缓冲、SSE 上游背压、consumer close 到 abort 的传播、多观察者分发和 terminal 获取方式。
 72. 禁止用无界 async queue 简单包装 callback sink；没有 buffer owner、关闭协议和资源收敛的流外观不属于 H2 能力。
 
+## M13 请求投影不变量
+
+73. Durable conversation、projected request 与 Provider payload 是不同对象。`ConversationStore` 保存完整事实；`RequestProjector` 只能从 immutable snapshot 派生新的 request，不得因 history start、context 注入或 tool preview 修改 Store membership 或嵌套 payload。
+74. `RequestProjectionPolicy` 显式拥有 history start、request-only user context 和有限 tool-result preview 参数。Policy 不是 Provider adapter 的隐式行为；非法 history index 或 preview limit 必须在模型调用前失败。
+75. History start 只选择当前 request 的可见起点。全量 Store 合法不意味着任意切片合法；投影后必须再次 strict 校验 tool call/result，一旦切到 orphan、missing 或 duplicate 边界就 fail closed。
+76. Request-only context 只进入本轮 `ModelRequest`，不追加到 durable history。当前 Harness 在 leading system messages 之后、首个非 system message 之前插入 context，以保持现有 OpenAI-compatible message 形状；这属于 clean-room 映射，不声称复制 Claude Code 的独立 system prompt 通道。
+77. 当前 Harness 的 tool-result preview 是 deterministic per-result bound，不是 Claude Code 的 aggregate API-user-group budget。完整 output 留在 Store，ModelRequest 使用 preview；真实外置存储、跨轮 replacement state、resume record 和 Prompt Cache edit 延后到 H3。
+78. `RequestProjectionReport` 只记录 source/selected/projected count、history omission、replacement count、context-injected boolean 与 strict status。Trace 不记录 policy context、prompt、完整 output 或 preview content。
+79. `RequestProjector` 在 capability snapshot 之外仍拒绝未知 tool schema；message projection、capability projection 和 local handler/permission 是三个独立边界，不能因请求消息合法而跳过能力与执行校验。
+80. TypeScript 与 Python 必须同时证明：Provider 看到 request-only context 和 bounded preview，Store 仍持有完整 output，Trace 不含两侧正文；任何一个边界失败都不能宣称 M13 合入完成。
+
 H0 与 H1 的全部不变量继续有效，分别见 `h0-contract.md` 和 `h1-contract.md`。
 
 ## 当前明确不承诺
@@ -50,6 +61,7 @@ H0 与 H1 的全部不变量继续有效，分别见 `h0-contract.md` 和 `h1-co
 - 已包含非流式 OpenAI-compatible 真实模型请求和顺序 Tool Loop，但不包含 SSE 流式 assistant 聚合或并行工具调度；
 - 不提供 pull-based `AgentRunStream`，也不声称 observer await 等同于网络端到端背压；
 - 不实现 Claude Code 的非严格 tool pairing 修复；Harness 当前选择 fail closed；
+- 不实现 aggregate API-user-group budget、跨轮 replacement state、外置 tool-result storage、resume replacement record 或 Prompt Cache edit；
 - 不实现 Transcript DAG、fork、compact 或跨进程恢复；
 - 不声称本 clean-room 消息联合等于快照中缺失的完整内部 `Message` 类型。
 - 不实现 Hook、Skill、MCP、Plugin、Subagent、Agent Team、完整 Permission 控制面或 Sandbox；

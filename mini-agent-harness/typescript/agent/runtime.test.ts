@@ -15,7 +15,10 @@ import {
   type SessionStateStore,
 } from '../runtimeContext.ts'
 import { PolicyPermissionGate, type PermissionGate } from './permissions.ts'
-import { RequestProjector } from './requestProjector.ts'
+import {
+  RequestProjector,
+  type RequestProjectionPolicy,
+} from './requestProjector.ts'
 import {
   AgentRuntime,
   MonotonicIdSource,
@@ -53,6 +56,53 @@ test('runs a two-request tool loop through the revisioned ConversationStore', as
     fixture.trace.events.some(event => Object.hasOwn(event.attributes, 'input')),
     false,
   )
+})
+
+test('projects request-only context and bounded tool previews without changing durable history', async () => {
+  const fullOutput = 'sensitive-result-'.repeat(20)
+  const inspect = tool('inspect', 'read', async () => fullOutput)
+  const model = new ScriptedModelAdapter([
+    request => {
+      assert.equal(JSON.stringify(request.messages).includes('workspace=demo'), true)
+      return {
+        responseId: 'response-1',
+        toolCalls: [{ id: 'call-inspect', name: 'inspect', input: {} }],
+      }
+    },
+    request => {
+      const toolResult = request.messages.find(message => message.role === 'tool')
+      assert.ok(toolResult?.role === 'tool')
+      assert.equal(toolResult.content.includes('preview:'), true)
+      assert.equal(toolResult.content.includes(fullOutput), false)
+      return { responseId: 'response-2', text: 'done', toolCalls: [] }
+    },
+  ])
+  const fixture = createFixture(
+    model,
+    [inspect],
+    new PolicyPermissionGate(),
+    4,
+    {
+      requestProjectionPolicy: {
+        userContext: 'workspace=demo',
+        maxToolResultChars: 32,
+        toolResultPreviewChars: 8,
+      },
+    },
+  )
+
+  const result = await fixture.runtime.submit('inspect', new AbortController().signal)
+
+  assert.equal(result.status, 'completed')
+  const durableResult = fixture.store.snapshot().messages.find(
+    message => message.kind === 'tool-result',
+  )
+  assert.equal(durableResult?.kind === 'tool-result' && durableResult.output, fullOutput)
+  const projectionTraces = fixture.trace.events.filter(event => event.type === 'request.projected')
+  assert.equal(projectionTraces.at(-1)?.attributes.replacedToolResultCount, 1)
+  assert.equal(projectionTraces.at(-1)?.attributes.userContextInjected, true)
+  assert.equal(JSON.stringify(projectionTraces).includes('workspace=demo'), false)
+  assert.equal(JSON.stringify(projectionTraces).includes(fullOutput), false)
 })
 
 test('turns permission denial into a paired error result that the model can observe', async () => {
@@ -431,20 +481,29 @@ test('deep-freezes nested model request data behind already-frozen message shell
     createSessionStateStore({}),
     'request-deep-freeze',
   )
-  const request = new RequestProjector(store).project({
-    requestContext,
-    conversation: store.snapshot(),
-    capabilities,
-    tools: [Object.freeze({
-      name: 'inspect',
-      description: 'Inspect nested data',
-      inputSchema: Object.freeze({
-        type: 'object',
-        properties: { options: { type: 'object' } },
-      }),
-    })],
-    model: 'scripted-model',
-  })
+  const projection = new RequestProjector(store).projectWithReport(
+    {
+      requestContext,
+      conversation: store.snapshot(),
+      capabilities,
+      tools: [Object.freeze({
+        name: 'inspect',
+        description: 'Inspect nested data',
+        inputSchema: Object.freeze({
+          type: 'object',
+          properties: { options: { type: 'object' } },
+        }),
+      })],
+      model: 'scripted-model',
+    },
+    {
+      historyStart: 1,
+      userContext: 'cwd=/workspace',
+      maxToolResultChars: 1,
+      toolResultPreviewChars: 1,
+    },
+  )
+  const request = projection.request
 
   const assistant = request.messages.find(message => message.role === 'assistant')
   assert.ok(assistant && assistant.role === 'assistant')
@@ -461,7 +520,62 @@ test('deep-freezes nested model request data behind already-frozen message shell
   assert.equal(Object.isFrozen(options.tags), true)
   assert.equal(Object.isFrozen(request.tools[0]!.inputSchema), true)
   assert.equal(Object.isFrozen(properties), true)
+  assert.deepEqual(projection.report, {
+    sourceCount: 3,
+    selectedCount: 2,
+    projectedCount: 3,
+    omittedBeforeHistoryStart: 1,
+    replacedToolResultCount: 1,
+    userContextInjected: true,
+    strictValidation: 'passed',
+  })
+  const durableResult = store.snapshot().messages[2]
+  assert.equal(durableResult?.kind === 'tool-result' && durableResult.output, 'ok')
   assert.throws(() => { options.limit = 99 }, TypeError)
+})
+
+test('strict request validation rejects a history start at an orphan tool result', () => {
+  const store = new ConversationStore()
+  const humanId = envelopeId('message-human')
+  const assistantId = envelopeId('message-assistant')
+  const callId = toolUseId('call-orphan')
+  store.append(0, [Object.freeze({ kind: 'human' as const, id: humanId, text: 'run' })])
+  store.append(1, [Object.freeze({
+    kind: 'assistant' as const,
+    id: assistantId,
+    responseId: responseId('response-orphan'),
+    parentId: humanId,
+    blocks: Object.freeze([toolUseBlock(callId, 'inspect', {})]),
+  })])
+  store.append(2, [Object.freeze({
+    kind: 'tool-result' as const,
+    id: envelopeId('message-result'),
+    toolUseId: callId,
+    output: 'ok',
+    isError: false,
+    parentId: assistantId,
+  })])
+  const catalog = new CapabilityCatalog()
+  const capabilities = new CapabilityProjector().project(
+    catalog.publish([{ name: 'inspect', description: 'Inspect', source: 'builtin', priority: 1 }]),
+    { boundary: 'request-orphan', mode: 'headless', provider: 'scripted', model: 'scripted-model' },
+  )
+  const requestContext = createRequestContext(
+    createRuntimeContext({
+      runtimeId: 'runtime-orphan', configurationRevision: 1,
+      modelAdapter: 'scripted', startedAt: 1,
+    }),
+    createSessionStateStore({}),
+    'request-orphan',
+  )
+
+  assert.throws(() => new RequestProjector(store).projectWithReport({
+    requestContext,
+    conversation: store.snapshot(),
+    capabilities,
+    tools: [{ name: 'inspect', description: 'Inspect', inputSchema: { type: 'object' } }],
+    model: 'scripted-model',
+  }, { historyStart: 2 }), /orphan or duplicate tool result/)
 })
 
 test('cancellation during the model call prevents another request', async () => {
@@ -548,6 +662,7 @@ function createFixture(
     events?: AgentEventSink
     sessionState?: SessionStateStore
     conversation?: ConversationStore
+    requestProjectionPolicy?: RequestProjectionPolicy
   }> = {},
 ): {
   runtime: AgentRuntime
@@ -585,6 +700,7 @@ function createFixture(
     conversation: store,
     trace: new TraceRecorder([trace], () => new Date('2026-01-01T00:00:00Z')),
     events: options.events,
+    requestProjectionPolicy: options.requestProjectionPolicy,
     ids: new MonotonicIdSource(),
   })
   return { runtime, store, trace, sessionState }

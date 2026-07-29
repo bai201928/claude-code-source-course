@@ -4,7 +4,7 @@
 
 这个仓库同时是一套**源码级 Claude Code 教材**、一条**可复核的教材生产流水线**，以及一个随学习逐步长成的 **Mini Agent Harness**。目标不是记住某几个私有函数名，而是获得可以迁移到企业 Agent 系统的能力：看懂源码、还原运行机制、验证关键判断、修改与复现设计，并在面试中把代码事实讲成系统设计。
 
-当前进度：`S0 + S1 已原子发布` · `M01-M09 共 9 个正式单元` · `1 个串联复习章` · `S2/M10-M12 已完成发布候选` · `Harness 0.2 / H2-in-progress`
+当前进度：`S0 + S1 已原子发布` · `M01-M09 共 9 个正式单元` · `1 个串联复习章` · `S2/M10-M13 已完成发布候选` · `Harness 0.2 / H2-in-progress`
 
 ## 它解决什么问题
 
@@ -35,12 +35,13 @@ flowchart LR
 
 建议从 [S0 发布说明](curriculum/stages/S0/release-summary.md) 开始，再读 [S1 发布说明](curriculum/stages/S1/release-summary.md)。完成 M01-M09 后，可以用 [I01：从一次启动到安全收尾](curriculum/interludes/I01-runtime-shell-review/final.md) 串起前九章的核心机制。
 
-想先判断这套教材的深度，可以直接阅读两个 S2 候选单元：
+想先判断这套教材的深度，可以直接阅读三个 S2 候选单元：
 
 - [M11：一条用户消息怎样穿过状态、请求投影和 Tool Loop](curriculum/units/M11/release-candidate.md)，建立第一次完整 Agent 运行地图；
-- [M12：谁在推进 Agent，从三层 Pull 到 Query 状态机](curriculum/units/M12/release-candidate.md)，深入控制权、双状态 owner、终止通道、取消与跨语言流协议。
+- [M12：谁在推进 Agent，从三层 Pull 到 Query 状态机](curriculum/units/M12/release-candidate.md)，深入控制权、双状态 owner、终止通道、取消与跨语言流协议；
+- [M13：对话里存在，为什么请求里看不见](curriculum/units/M13/release-candidate.md)，区分 durable、query、API、wire 四层对象，解释请求正规化、tool pairing、跨轮 replacement state 与 Provider 参数装配。
 
-M12 同时附带 TypeScript `6/6`、Python `5/5` 的可执行实验和 11 张经实际渲染的局部图。它不是异步生成器语法复述，而是把 `yield` 前后顺序提升为状态一致性、背压、consumer close 和企业 RunCoordinator 设计。
+M12 附带 TypeScript `6/6`、Python `5/5` 的 Query 控制实验和 11 张局部图；M13 附带 TypeScript `9/9`、Python `8/8` 的请求投影实验和 17 张局部图。两章的 Mermaid 均实际生成 SVG，事实与教学闸门均已闭合。
 
 ### 2. Codex 主控 + Claude Code/DeepSeek 双闸门
 
@@ -70,7 +71,9 @@ Graphify 只用于发现候选组件和跨文件路径。任何 `EXTRACTED` 关�
 flowchart LR
   CLI["Interactive / Headless"] --> AR["AgentRuntime"]
   AR --> CS["Revisioned ConversationStore"]
-  CS --> RP["Request + Capability Snapshot"]
+  CS --> RP["RequestProjector\nhistory + context + preview"]
+  AR --> SNAP["Capability Snapshot"]
+  SNAP --> RP
   RP --> LLM["OpenAI-compatible Provider"]
   LLM -->|"tool calls"| PG["Permission Gate"]
   PG --> TOOLS["Workspace Tools"]
@@ -85,6 +88,7 @@ flowchart LR
 - Interactive / Headless 共用 Agent Loop；
 - revisioned conversation、单 Runtime owner 与 active-run lease；
 - 稳定的 RequestContext / CapabilitySnapshot；
+- history start、request-only context、bounded tool-result preview 与 strict request validation；
 - OpenAI-compatible Chat Completions Provider；
 - permission-aware Tool Loop 与 `read/list/search/command` 工作区工具；
 - tool call/result 配对、错误反馈、取消补齐、single-flight 与最大轮次；
@@ -119,7 +123,7 @@ npm run agent -- --prompt "先列出五个 Markdown 文件，再总结项目结�
 npm run agent -- --grant-executable rg
 ```
 
-当前验证基线为 TypeScript Agent `34/34`、strict typecheck 通过、Python Agent `11/11`、Python ConversationStore `13/13`，以及 H2/H1/S0 全部累计回归通过。M12 另有 TypeScript `6/6`、Python `5/5` 的 Query 控制实验。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
+当前验证基线为 TypeScript Agent `36/36`、strict typecheck 通过、Python Agent `12/12`、Python ConversationStore `13/13`，以及 H2/H1/S0 全部累计回归通过。独立单元实验为 M12 TypeScript `6/6`、Python `5/5`，M13 TypeScript `9/9`、Python `8/8`。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
 
 ## 当前课程地图
 
@@ -128,7 +132,7 @@ npm run agent -- --grant-executable rg
 | S0 | TypeScript、异步生成器、Node 运行时、可验证源码追踪 | M01-M04 已发布 |
 | S1 | 运行表面、配置与信任、状态、能力投影、生命周期 | M05-M09 已发布 |
 | I01 | M01-M09 核心机制串联复习 | 已发布 |
-| S2 | 消息、Query、模型请求与 Tool Loop | M10-M12 发布候选，M13 下一步 |
+| S2 | 消息、Query、模型请求与 Tool Loop | M10-M13 发布候选，M14 下一步 |
 | S3-S7 | Context、扩展系统、多 Agent、恢复、安全与治理 | 动态规划 |
 
 课程没有最低章节数。当前设计包是一张工作地图，不是不可修改的目录合同；后续研究可以合章、拆章或调整顺序，但不能因此遗漏重要机制或破坏 Harness 契约。
@@ -172,4 +176,4 @@ npm run agent -- --grant-executable rg
 
 ---
 
-项目正在沿 S2 继续推进：下一步是 M13 请求投影，解释 durable conversation 为什么不等于本次模型请求，以及 compact boundary、tool result pairing、正规化和 Provider payload 怎样共同形成合法、可审计的请求视图。
+项目正在沿 S2 继续推进：下一步是 M14 模型流，研究 `messages.create(stream=true)` 返回的 SSE 片段怎样被消费、聚合、取消和重试，并怎样形成可提交的 assistant message。

@@ -104,6 +104,29 @@ class ModelRequest:
 
 
 @dataclass(frozen=True)
+class RequestProjectionPolicy:
+    history_start: int = 0
+    user_context: str = ""
+    max_tool_result_chars: int | None = None
+    tool_result_preview_chars: int = 96
+
+
+@dataclass(frozen=True)
+class RequestProjectionReport:
+    source_count: int
+    selected_count: int
+    projected_count: int
+    omitted_before_history_start: int
+    replaced_tool_result_count: int
+    user_context_injected: bool
+    strict_validation: Literal["passed"] = "passed"
+
+
+class RequestProjectionError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
 class ModelUsage:
     input_tokens: int = 0
     output_tokens: int = 0
@@ -390,6 +413,7 @@ class AgentRuntime:
         conversation: ConversationStore | None = None,
         trace: TraceRecorder | None = None,
         ids: MonotonicIdSource | None = None,
+        request_projection_policy: RequestProjectionPolicy | None = None,
     ) -> None:
         if isinstance(max_turns, bool) or not isinstance(max_turns, int):
             raise ValueError("max_turns must be an integer from 1 to 32")
@@ -403,6 +427,9 @@ class AgentRuntime:
         self._conversation.bind_runtime(self)
         self._trace = trace or TraceRecorder()
         self._ids = ids or MonotonicIdSource()
+        self._request_projection_policy = (
+            request_projection_policy or RequestProjectionPolicy()
+        )
 
     @property
     def trace(self) -> TraceRecorder:
@@ -437,7 +464,9 @@ class AgentRuntime:
                     return self._cancelled(run_id, turns - 1, usage, "before-request")
 
                 request_revision = self._conversation.revision
-                request = self._project_request(self._ids.next("request"))
+                request, projection_report = self._project_request(
+                    self._ids.next("request")
+                )
                 self._trace.record(
                     run_id,
                     "request.projected",
@@ -447,6 +476,12 @@ class AgentRuntime:
                         "message_count": len(request.messages),
                         "tool_count": len(request.tools),
                         "conversation_revision": self._conversation.revision,
+                        "source_message_count": projection_report.source_count,
+                        "selected_message_count": projection_report.selected_count,
+                        "omitted_before_history_start": projection_report.omitted_before_history_start,
+                        "replaced_tool_result_count": projection_report.replaced_tool_result_count,
+                        "user_context_injected": projection_report.user_context_injected,
+                        "strict_validation": projection_report.strict_validation,
                     },
                 )
                 try:
@@ -665,15 +700,95 @@ class AgentRuntime:
             )
             next_revision = self._conversation.revision
 
-    def _project_request(self, request_id: str) -> ModelRequest:
+    def _project_request(
+        self, request_id: str
+    ) -> tuple[ModelRequest, RequestProjectionReport]:
         snapshot = self._conversation.snapshot()
         self._conversation.assert_request_ready(snapshot)
-        return ModelRequest(
+        policy = self._request_projection_policy
+        if (
+            isinstance(policy.history_start, bool)
+            or not isinstance(policy.history_start, int)
+            or policy.history_start < 0
+            or policy.history_start > len(snapshot.messages)
+        ):
+            raise RequestProjectionError(
+                "history_start must be a valid durable message index"
+            )
+        if (
+            policy.max_tool_result_chars is not None
+            and (
+                isinstance(policy.max_tool_result_chars, bool)
+                or not isinstance(policy.max_tool_result_chars, int)
+                or policy.max_tool_result_chars < 1
+            )
+        ):
+            raise RequestProjectionError(
+                "max_tool_result_chars must be a positive integer"
+            )
+        if (
+            isinstance(policy.tool_result_preview_chars, bool)
+            or not isinstance(policy.tool_result_preview_chars, int)
+            or policy.tool_result_preview_chars < 0
+        ):
+            raise RequestProjectionError(
+                "tool_result_preview_chars must be a non-negative integer"
+            )
+
+        selected = snapshot.messages[policy.history_start :]
+        projected: list[ModelMessage] = []
+        replaced = 0
+        for message in selected:
+            model_message = _project_message(message)
+            if (
+                model_message.role == "tool"
+                and policy.max_tool_result_chars is not None
+                and model_message.content is not None
+                and len(model_message.content) > policy.max_tool_result_chars
+            ):
+                replaced += 1
+                prefix = model_message.content[: policy.tool_result_preview_chars]
+                model_message = ModelMessage(
+                    "tool",
+                    f"[tool result {model_message.tool_call_id} preview: "
+                    f"{len(model_message.content)} chars; prefix={prefix!r}]",
+                    tool_call_id=model_message.tool_call_id,
+                )
+            projected.append(model_message)
+
+        user_context = policy.user_context.strip()
+        if user_context:
+            insertion_index = next(
+                (
+                    index
+                    for index, message in enumerate(projected)
+                    if message.role != "system"
+                ),
+                len(projected),
+            )
+            projected.insert(
+                insertion_index,
+                ModelMessage(
+                    "user",
+                    f"<system-reminder>\n{user_context}\n</system-reminder>",
+                ),
+            )
+        _assert_strict_request_pairing(projected)
+        request = ModelRequest(
             request_id,
             self._model.model,
-            tuple(_project_message(message) for message in snapshot.messages),
+            tuple(projected),
             self._tools.definitions(),
         )
+        report = RequestProjectionReport(
+            len(snapshot.messages),
+            len(selected),
+            len(projected),
+            policy.history_start,
+            replaced,
+            bool(user_context),
+        )
+        return request, report
 
     def _tool_finished(
         self,
@@ -767,6 +882,33 @@ def _project_message(message: DurableMessage) -> ModelMessage:
         )
         return ModelMessage("assistant", text or None, calls)
     raise TypeError(f"unknown durable message: {type(message).__name__}")
+
+
+def _assert_strict_request_pairing(messages: Sequence[ModelMessage]) -> None:
+    pending: set[str] = set()
+    for message in messages:
+        if message.role == "tool":
+            call_id = message.tool_call_id or ""
+            if call_id not in pending:
+                raise RequestProjectionError(
+                    f"orphan or duplicate tool result: {call_id}"
+                )
+            pending.remove(call_id)
+            continue
+        if pending:
+            raise RequestProjectionError(
+                "missing tool results: " + ",".join(sorted(pending))
+            )
+        if message.role != "assistant":
+            continue
+        for call in message.tool_calls:
+            if call.id in pending:
+                raise RequestProjectionError(f"duplicate tool use id: {call.id}")
+            pending.add(call.id)
+    if pending:
+        raise RequestProjectionError(
+            "missing tool results: " + ",".join(sorted(pending))
+        )
 
 
 def _copy_request(request: ModelRequest) -> ModelRequest:

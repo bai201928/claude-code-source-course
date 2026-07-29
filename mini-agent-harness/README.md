@@ -11,6 +11,8 @@ flowchart LR
   CLI["Interactive / Headless CLI"] --> AR["AgentRuntime"]
   AR --> CS["ConversationStore revision"]
   CS --> RP["RequestProjector"]
+  AR --> POL["ProjectionPolicy"]
+  POL --> RP
   AR --> CAP["CapabilitySnapshot"]
   CAP --> RP
   RP --> MODEL["OpenAI-compatible ModelAdapter"]
@@ -22,6 +24,8 @@ flowchart LR
   RESULT --> CS
   CS -->|"下一次模型迭代"| RP
   AR --> TRACE["metadata-only Trace"]
+  RP --> REPORT["metadata-only ProjectionReport"]
+  REPORT --> TRACE
   AR --> LIFE["budgeted shutdown"]
 ```
 
@@ -30,6 +34,8 @@ flowchart LR
 - Interactive 与 Headless 两种运行表面，共享同一会话和 Agent Loop；
 - revisioned `ConversationStore`，严格区分 human、assistant、tool result 与 identity，并用单 Runtime owner 与 active-run lease 阻止异步等待期间的外部插写；
 - 每次模型迭代冻结 RequestContext 与 CapabilitySnapshot；
+- `RequestProjectionPolicy` 支持 history start、request-only context 和 bounded tool-result preview，投影后 strict 校验 pairing；
+- `RequestProjectionReport` 只输出成员计数、omission、replacement count 与状态，不复制 prompt 或 tool output；
 - OpenAI-compatible Chat Completions 适配器，可连接 DeepSeek 兼容端点；
 - `read_file`、`list_files`、`search_text` 与默认拒绝的 `run_command`；
 - capability 可见、permission 允许、handler 注册三层独立校验；
@@ -113,6 +119,7 @@ npm run agent -- --grant-executable rg --grant-executable node
 | 层次 | 验证内容 |
 | --- | --- |
 | Agent Runtime | 两轮 tool loop、Permission 拒绝、工具取消配对、single-flight、Provider failure |
+| Request projection | history start、ephemeral context、bounded preview、strict pairing、durable source/Trace 隔离 |
 | Provider protocol | Chat Completions 请求投影、tool call JSON、usage、脱敏 HTTP 错误、URL 约束 |
 | Built-in tools | workspace 越界、`rg` 搜索、默认拒绝命令、secret 不进入子进程 |
 | Python mirror | 与 TypeScript 一致的 loop、pairing、permission、cancel 行为 |
@@ -120,7 +127,7 @@ npm run agent -- --grant-executable rg --grant-executable node
 
 真实 API 冒烟与确定性测试分开。模型可达不证明 Tool Loop 正确，fake provider 测试通过也不伪装成真实网络验证。
 
-当前验证基线（2026-07-29）：`npm test` 为 `34/34`，本地锁定编译器的 strict typecheck 通过；`npm run test:all` 为 Agent `4/4`，其中包含 H2 `4/4`、H1 `12/12` 和 S0 `15/15`。Python 17 个源码/测试文件全部通过 `py_compile`。
+当前验证基线（2026-07-29）：`npm test` 为 `36/36`，本地锁定编译器的 strict typecheck 通过，Python Agent 为 `12/12`；`npm run test:all` 为 Agent `4/4`，其中包含 H2 `4/4`、H1 `12/12` 和 S0 `15/15`。M13 独立投影实验另有 TypeScript `9/9`、Python `8/8`。
 
 ## 为什么适合简历和面试讲解
 
@@ -139,4 +146,4 @@ npm run agent -- --grant-executable rg --grant-executable node
 
 ## 当前边界
 
-本版本有意不实现 SSE 流式聚合、工具并发、Context 压缩、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox、分布式执行和完整 OTel。它们会随后续教材机制逐步接入；本轮不为了显得“功能多”而提前制造一组空接口。
+本版本有意不实现 SSE 流式聚合、工具并发、完整 Context 压缩、aggregate tool-result budget、外置结果恢复、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox、分布式执行和完整 OTel。它们会随后续教材机制逐步接入；本轮不为了显得“功能多”而提前制造一组空接口。

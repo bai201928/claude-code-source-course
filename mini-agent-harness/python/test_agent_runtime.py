@@ -14,6 +14,7 @@ from agent_runtime import (
     ModelToolCall,
     PermissionGate,
     PermissionRequest,
+    RequestProjectionPolicy,
     ScriptedModel,
     ToolContext,
     ToolRegistry,
@@ -58,6 +59,7 @@ def fixture(
     max_turns: int = 4,
     gate: PermissionGate | None = None,
     trace: TraceRecorder | None = None,
+    request_projection_policy: RequestProjectionPolicy | None = None,
 ) -> tuple[AgentRuntime, ConversationStore, TraceRecorder]:
     registry = ToolRegistry()
     for candidate in tools:
@@ -71,6 +73,7 @@ def fixture(
         max_turns=max_turns,
         conversation=store,
         trace=recorder,
+        request_projection_policy=request_projection_policy,
     )
     return runtime, store, recorder
 
@@ -113,6 +116,56 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Calculate 20 + 22", rendered_trace)
         self.assertNotIn("The answer is 42.", rendered_trace)
         self.assertNotIn("42'", rendered_trace)
+
+    async def test_request_context_and_tool_preview_do_not_change_durable_history(self) -> None:
+        full_output = "sensitive-result-" * 20
+
+        async def inspect(_values, _context):
+            return full_output
+
+        def first(request, _index, _signal):
+            self.assertIn("workspace=demo", repr(request.messages))
+            return ModelResponse(
+                "response-1", tool_calls=(call("call-inspect", "inspect"),)
+            )
+
+        def final(request, _index, _signal):
+            result = tool_message(request.messages, "call-inspect")
+            self.assertIn("preview:", result.content or "")
+            self.assertNotIn(full_output, result.content or "")
+            return ModelResponse("response-2", "done")
+
+        model = ScriptedModel((first, final))
+        runtime, store, trace = fixture(
+            model,
+            (tool("inspect", inspect),),
+            request_projection_policy=RequestProjectionPolicy(
+                user_context="workspace=demo",
+                max_tool_result_chars=32,
+                tool_result_preview_chars=8,
+            ),
+        )
+
+        result = await runtime.submit("inspect", CancellationSignal())
+
+        self.assertEqual(result.status, "completed")
+        durable = next(
+            message
+            for message in store.snapshot().messages
+            if isinstance(message, ToolResultMessage)
+        )
+        self.assertEqual(durable.output, full_output)
+        projection_events = [
+            event for event in trace.events if event.event_type == "request.projected"
+        ]
+        self.assertEqual(
+            projection_events[-1].attributes["replaced_tool_result_count"], 1
+        )
+        self.assertIs(
+            projection_events[-1].attributes["user_context_injected"], True
+        )
+        self.assertNotIn("workspace=demo", repr(projection_events))
+        self.assertNotIn(full_output, repr(projection_events))
 
     async def test_permission_denial_is_a_paired_error_result(self) -> None:
         executed = False

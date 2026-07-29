@@ -33,9 +33,9 @@ The loop has one durable message owner. Each `ConversationStore` binds exactly o
 | --- | --- | --- |
 | Released S0 / M01-M04 | runtime validation, legal state transitions, pull-driven events, cancellation/resource boundaries and traceable call evidence | H0 domain core and cumulative regression |
 | Released S1 / M05-M09 | surface/core separation, configuration provenance, immutable request state, capability projection and budgeted lifecycle | H1 runtime shell around the H0 core |
-| Approved S2 work from M10-M12 | durable message ownership, request projection, provider boundary, paired Tool Loop and run-channel separation | H2-in-progress single-agent vertical slice |
+| Approved S2 work from M10-M13 | durable message ownership, request projection, provider boundary, paired Tool Loop and run-channel separation | H2-in-progress single-agent vertical slice |
 
-The third row is an implementation lead, not an S2 release claim. Streaming assembly, parallel tools and the remaining M13-M15 teaching mechanisms stay deferred until their units close the corresponding evidence and learning loops.
+The third row is an implementation lead, not an S2 release claim. Streaming assembly, parallel tools and the remaining M14-M15 teaching mechanisms stay deferred until their units close the corresponding evidence and learning loops.
 
 ## Ownership
 
@@ -46,11 +46,27 @@ The third row is an implementation lead, not an S2 release claim. Streaming asse
 | Process dependencies | `RuntimeContext` | request factory | immutable |
 | Session metadata | `SessionStateStore` | request factory | publication |
 | Durable messages and tool pairing | `ConversationStore` | request projector, diagnostics | revision-checked append/replace |
+| Request visibility and preview limits | `RequestProjectionPolicy` | request projector | runtime composition |
+| Projection counts and validation status | `RequestProjectionReport` | metadata trace | one report per request |
 | Current model iteration | `AgentRuntime` | trace/event observers | single-flight run |
 | Model-visible tools | `CapabilitySnapshot` | request projector, registry | new iteration boundary |
 | Tool handlers | `AgentToolRegistry` | runtime | bootstrap registration |
 | Tool authorization | `PermissionGate` | runtime | one decision per dispatch |
 | Shutdown report | `LifecycleCoordinator` | CLI | first shutdown caller |
+
+## Request projection boundary
+
+`ConversationStore` contains the complete durable result. `RequestProjector` creates a separate frozen `ModelRequest` using an explicit policy:
+
+1. select a valid history start from the immutable snapshot;
+2. insert request-only user context after leading system messages;
+3. replace over-limit tool output with a deterministic bounded preview;
+4. validate tool call/result pairing again after projection;
+5. return a content-free report with counts and validation status.
+
+The second strict validation is required because a full conversation can be legal while a selected suffix begins at an orphan tool result. Projection failure happens before the Provider call. Neither request-only context nor preview content is written back to durable history, and Trace receives only scalar report fields.
+
+The current preview is deliberately per result. It is not presented as Claude Code's aggregate API-user-group budget. Cross-turn replacement state, external result storage, resume records, compact transactions and Prompt Cache edits need the later Context and Transcript contracts.
 
 ## Provider boundary
 
@@ -114,6 +130,7 @@ Implemented now:
 
 - persistent in-process conversation;
 - request and capability snapshots per model iteration;
+- explicit history/context/preview request policy, strict post-projection validation and metadata report;
 - real OpenAI-compatible provider port;
 - sequential single-agent tool loop;
 - read/search/list tools and explicitly granted command executables;
@@ -125,7 +142,7 @@ Implemented now:
 Explicitly deferred:
 
 - SSE streaming assembly and parallel tool scheduling;
-- context compression and memory;
+- aggregate result budgeting, external result storage, context compression and memory;
 - Hook, Skill, MCP and Plugin execution;
 - subagents and teams;
 - transcript persistence, resume and crash recovery;

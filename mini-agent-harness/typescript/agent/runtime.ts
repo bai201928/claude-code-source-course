@@ -23,7 +23,10 @@ import {
 } from '../runtimeContext.ts'
 import type { ModelAdapter, ModelResponse, ModelUsage } from './model.ts'
 import { PermissionDeniedError, type PermissionGate } from './permissions.ts'
-import { RequestProjector } from './requestProjector.ts'
+import {
+  RequestProjector,
+  type RequestProjectionPolicy,
+} from './requestProjector.ts'
 import { TraceRecorder } from './trace.ts'
 import {
   AgentToolRegistry,
@@ -92,6 +95,7 @@ export type AgentRuntimeOptions = Readonly<{
   events?: AgentEventSink
   ids?: IdSource
   systemPrompt?: string
+  requestProjectionPolicy?: RequestProjectionPolicy
 }>
 
 export class AgentRuntime {
@@ -107,6 +111,7 @@ export class AgentRuntime {
   readonly #conversation: ConversationStore
   readonly #capabilityProjector: CapabilityProjector
   readonly #requestProjector: RequestProjector
+  readonly #requestProjectionPolicy: RequestProjectionPolicy
   readonly #trace: TraceRecorder
   readonly #events?: AgentEventSink
   readonly #ids: IdSource
@@ -129,6 +134,9 @@ export class AgentRuntime {
     this.#conversation = options.conversation ?? new ConversationStore()
     this.#capabilityProjector = options.capabilityProjector ?? new CapabilityProjector()
     this.#requestProjector = new RequestProjector(this.#conversation)
+    this.#requestProjectionPolicy = Object.freeze({
+      ...options.requestProjectionPolicy,
+    })
     this.#trace = options.trace
     this.#events = options.events
     this.#ids = options.ids ?? new MonotonicIdSource()
@@ -194,13 +202,17 @@ export class AgentRuntime {
           this.#sessionState,
           requestId,
         )
-        const request = this.#requestProjector.project({
-          requestContext,
-          conversation,
-          capabilities,
-          tools: definitions,
-          model: this.#model.model,
-        })
+        const projection = this.#requestProjector.projectWithReport(
+          {
+            requestContext,
+            conversation,
+            capabilities,
+            tools: definitions,
+            model: this.#model.model,
+          },
+          this.#requestProjectionPolicy,
+        )
+        const request = projection.request
         await this.#trace.record(runId, 'request.projected', {
           requestId,
           turn: turns,
@@ -208,6 +220,12 @@ export class AgentRuntime {
           toolCount: request.tools.length,
           conversationRevision: conversation.revision,
           sessionRevision: requestContext.sessionRevision,
+          sourceMessageCount: projection.report.sourceCount,
+          selectedMessageCount: projection.report.selectedCount,
+          omittedBeforeHistoryStart: projection.report.omittedBeforeHistoryStart,
+          replacedToolResultCount: projection.report.replacedToolResultCount,
+          userContextInjected: projection.report.userContextInjected,
+          strictValidation: projection.report.strictValidation,
         })
 
         let response: ModelResponse

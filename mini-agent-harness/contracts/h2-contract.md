@@ -1,0 +1,57 @@
+# H2 行为契约（进行中）
+
+版本：`H2-in-progress`
+
+当前来源单元：M10、M11，以及用户批准的 S0/S1 核心纵切升级。S2 尚未完成；本文件冻结已经验证并合入累计 Harness 的消息所有权、请求投影、Provider 边界和单 Agent Tool Loop。流式聚合、完整 Context Pipeline 与并发 Tool 调度仍由后续单元演进。
+
+## M10 消息与会话不变量
+
+43. `ConversationStore` 是 durable conversation membership 的唯一 owner；调用者只能通过 `append`、`replace` 和 `snapshot` 进入其状态边界，不能依赖共享数组别名写回。
+44. 每次成功 publication 产生单调递增 revision。writer 必须提交读取时的 expected revision；stale writer 显式失败，不得静默覆盖另一 writer 的更新。
+45. snapshot 固定创建时的 revision 与消息成员集合。后续 append 不改变旧 snapshot；publication 会复制并深冻结嵌套 payload，调用者后续修改输入对象不能回写已发布消息。
+46. `EnvelopeId`、`ResponseId` 与 `ToolUseId` 是不同概念。envelope ID 在 store 内唯一；多个 assistant envelope 可以共享一个 response ID，但不能因此互相覆盖。
+47. human input 与 tool result 是不同领域类别，即使 provider 协议可能把二者都编码为 user role。领域判断必须使用显式 kind，不能把 role 当作完整分类器。
+48. tool result 只能解析一个已登记且仍 pending 的 tool use。孤儿 result、重复 result 和重复 tool-use ID 在 publication 前 fail closed。
+49. provider request 边界额外要求 tool results 紧邻产生它们的 assistant turn；并行 tool uses 可以按任意结果顺序各解析一次，但缺失或被其他消息隔开的结果不能进入请求。
+50. progress 是 ephemeral event：它有独立 sequence 和 trace，但不进入 durable message membership，也不推进 conversation revision；只有 pending tool use 可以产生 progress。
+51. parent ID 必须指向 publication 顺序中已经存在的 envelope。`replace` 先完整校验新序列，失败时保留原状态与 revision。
+52. `ConversationTrace` 记录 operation、status、revision、message IDs 和 rejection reason，不记录 prompt 或 tool payload；它用于观察所有权与冲突，不充当 Transcript 持久化。
+
+## M11 与 S0/S1 核心纵切不变量
+
+53. 集成路径只使用 `ConversationStore` 作为 durable message owner；M11 教学实验中的第二套 `SessionStore` 不进入累计 Harness。每次 append 经过 revision 和 tool-use pairing 校验。
+54. 一个 `ConversationStore` 只绑定一个 `AgentRuntime` owner；第二个 Runtime 必须在装配时显式失败。同一 owner 内只允许一个 active run；运行期间所有 durable publication 必须持有 Store 发出的 run lease，外部 writer 直接拒绝。模型响应按发请求时的 expected revision 提交，不能把针对旧快照的 assistant 接到后来消息之后。
+55. 每次模型迭代创建新的 `RequestContext`、`CapabilitySnapshot` 和 `ModelRequest`。后续 session/capability publication 不修改已经送往 Provider 的请求视图。
+56. `ModelAdapter` 只负责 Provider 协议投影、传输和响应运行时校验；它不拥有会话、不执行工具，也不决定是否进入下一轮。
+57. 工具 dispatch 同时要求当前 capability snapshot 可见、PermissionGate 允许、本地 handler 存在。三者任一失败都不得执行工具。
+58. 未知工具、输入错误、Permission 拒绝、工具异常和不可序列化的工具输出都形成与原 tool-use ID 一一配对的 error result；随后由模型决定是否修复或结束，运行时不伪造成功，也不能留下阻断下一次请求的悬空 tool use。
+59. 取消到达模型、Permission 或工具边界后，不再发起新的模型请求；ModelAdapter resolve 后、Permission allow 与工具执行之间、工具 resolve 后都必须再次检查取消，迟到响应不能提交为成功，权限刚通过也不能越过已发生的取消产生工具副作用。若 assistant 已发布多个 tool use，当前和未启动调用都必须补齐 cancelled error result，使会话仍能通过请求配对检查。
+60. `maxTurns` 是 Agent Loop 的显式终止边界；达到上限返回 `max-turns`，不递归或无限继续。
+61. 组合 Trace 使用 run/request/tool identity、revision、计数、阶段和状态；不记录 prompt、tool input/output、HTTP body、认证头或凭据。用户可见 assistant text 使用独立事件通道；事件 sink 失败只能形成诊断，不能中断 Tool Loop 或留下未配对消息。
+62. 内置文件工具先做 lexical 与 realpath workspace 检查并限制读取/输出，`read_file` 拒绝 `.env`/`.env.*` credential 文件并只允许空模板 `.env.example`；搜索固定 workspace 外解析出的可信 `rg` 绝对路径，所有子进程使用不含 Provider credential 的脱敏环境。命令工具使用 `shell:false`、bare executable、显式 grant、超时和输出上限。
+63. executable grant 授予该程序任意 argv，是高风险 Permission 边界，不是“安全命令”或 Sandbox。直接子进程被终止也不证明所有后代已经退出；累计 Harness 不声称已实现 argv profile、进程树、文件系统、系统调用或容器隔离。
+64. Provider credential 只从进程环境边界解析；credential resolver 与 Provider 路径不得把它自动注入 `ConfigurationSnapshot.effective`、Runtime/RequestContext、ConversationStore、Trace、命令子进程环境或错误文本。用户主动输入凭据，或显式 executable grant 允许的任意 argv，不属于这项保证。
+65. Interactive 与 Headless 共享同一个 `AgentRuntime` 语义；输出格式只影响用户事件和最终 summary 投影，不改变会话、模型或工具决策。
+66. LifecycleCoordinator 负责共享 shutdown report 与有预算的 trace flush；CLI signal 接线和最终 `process.exitCode` 仍由外层 Surface 持有。
+67. OpenAI-compatible Provider 必须验证 assistant role、function call 类型和 `finish_reason`；`length`、`content_filter` 等非成功终止不能带着部分文本伪装成 completed。
+
+H0 与 H1 的全部不变量继续有效，分别见 `h0-contract.md` 和 `h1-contract.md`。
+
+## 当前明确不承诺
+
+- 已包含非流式 OpenAI-compatible 真实模型请求和顺序 Tool Loop，但不包含 SSE 流式 assistant 聚合或并行工具调度；
+- 不实现 Claude Code 的非严格 tool pairing 修复；Harness 当前选择 fail closed；
+- 不实现 Transcript DAG、fork、compact 或跨进程恢复；
+- 不声称本 clean-room 消息联合等于快照中缺失的完整内部 `Message` 类型。
+- 不实现 Hook、Skill、MCP、Plugin、Subagent、Agent Team、完整 Permission 控制面或 Sandbox；
+- 不把 granted executable 描述为安全命令或隔离，也不把 metadata trace 描述为完整 OTel。
+
+## 回归命令
+
+```powershell
+cd "D:\agent\Claude code最新\mini-agent-harness"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run-h2-regression.ps1
+
+# 集成 Agent 纵切（包含 H2/H1/S0 回归）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run-agent-regression.ps1
+```

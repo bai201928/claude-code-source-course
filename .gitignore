@@ -2,8 +2,13 @@
 # Nested reference repositories and restricted snapshot are
 # not tracked by the study-control repo.
 # ============================================================
-/repos/official/
+/repos/
 /claude-code-CLI/
+
+# Machine-local Codex/Claude configuration contains absolute paths and
+# permission choices that are neither portable nor part of the course.
+/.codex/
+/.claude/settings.local.json
 
 # ============================================================
 # Local source snapshot — only metadata files are tracked.
@@ -17,6 +22,7 @@ source-snapshot/*
 # ============================================================
 review-workspaces/*
 !review-workspaces/.gitkeep
+**/review-workspace/
 tmp/*
 !tmp/.gitkeep
 
@@ -69,3 +75,6 @@ tmp/*
 Thumbs.db
 .idea/
 .vscode/
+
+# Graphify is a rebuildable local navigation cache.
+/graphify-out/

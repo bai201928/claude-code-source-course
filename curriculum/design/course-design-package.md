@@ -16,7 +16,7 @@
 
 本设计包当前展示 42 个候选单元，原则上总量不超过 45，但没有最低下限。每个单元的主体学习为 4 至 7 小时；实践、失败注入、扩展挑战和深入实验另计。逐章研究和生成时可调整尚未发布单元及阶段边界，必要时最终总量可以低于 30。
 
-本文件和 M11 质量标杆均已通过用户审批。S0 的 M01-M04 与 H0 已于 2026-07-28 原子发布；S1 的 M05-M09 与 H1 已于 2026-07-29 完成阶段一致性检查并原子发布。S2 的 M10 与已批准 M11 标杆现均为 `release-candidate`，当前下一单元为 M12。所有后续单元在所属阶段原子发布前仍只生成 `release-candidate.md`，不提前创建 `final.md`。
+本文件和 M11 质量标杆均已通过用户审批。S0 的 M01-M04 与 H0 已于 2026-07-28 原子发布；S1 的 M05-M09 与 H1 已于 2026-07-29 完成阶段一致性检查并原子发布。S2 的 M10、已批准 M11 标杆与 M12 现均为 `release-candidate`，当前下一单元为 M13。所有后续单元在所属阶段原子发布前仍只生成 `release-candidate.md`，不提前创建 `final.md`。
 
 ## 2. 设计结论
 
@@ -681,4 +681,5 @@ flowchart LR
 - 累计 Harness 当前为 `0.2 / H2-in-progress`：H0/H1 全部契约继续回归，并基于已批准的 M10/M11 研究提前接入 durable conversation、请求/能力快照、OpenAI-compatible Provider、Permission-aware Tool Loop、取消配对、工作区工具与 metadata-only Trace；
 - 这条作品级纵切用于把 S0/S1 的类型、异步、Surface、配置、状态、能力和生命周期机制串成可运行系统，不代表 H2 或 S2 已经发布；
 - SSE 流式组装、并行工具、Context 压缩、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox 与生产治理仍按后续真实学习闭环推进，不因当前 Harness 已可运行而提前填充空接口；
-- 下一课程入口保持 S2/M12；后续若研究证明 M12-M15 需要合并或重排，只同步依赖、主题覆盖、TypeScript 前置与 Harness 契约，不维持章节数量配额。
+- M12 已闭合 Query 控制权、双 owner、terminal/SDK result 分层和取消/close/throw 语义，并把完整 pull-based Harness stream 延后到 M14；
+- 下一课程入口为 S2/M13 请求投影；后续若研究证明 M13-M15 需要合并或重排，只同步依赖、主题覆盖、TypeScript 前置与 Harness 契约，不维持章节数量配额。

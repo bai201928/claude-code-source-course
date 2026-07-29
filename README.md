@@ -4,7 +4,7 @@
 
 这个仓库同时是一套**源码级 Claude Code 教材**、一条**可复核的教材生产流水线**，以及一个随学习逐步长成的 **Mini Agent Harness**。目标不是记住某几个私有函数名，而是获得可以迁移到企业 Agent 系统的能力：看懂源码、还原运行机制、验证关键判断、修改与复现设计，并在面试中把代码事实讲成系统设计。
 
-当前进度：`S0 + S1 已原子发布` · `M01-M09 共 9 个正式单元` · `1 个串联复习章` · `S2/M10-M11 已完成发布候选` · `Harness 0.2 / H2-in-progress`
+当前进度：`S0 + S1 已原子发布` · `M01-M09 共 9 个正式单元` · `1 个串联复习章` · `S2/M10-M12 已完成发布候选` · `Harness 0.2 / H2-in-progress`
 
 ## 它解决什么问题
 
@@ -34,6 +34,13 @@ flowchart LR
 - 信息密集处使用局部流程图、时序图和状态图，既帮助第一次理解，也方便复习。
 
 建议从 [S0 发布说明](curriculum/stages/S0/release-summary.md) 开始，再读 [S1 发布说明](curriculum/stages/S1/release-summary.md)。完成 M01-M09 后，可以用 [I01：从一次启动到安全收尾](curriculum/interludes/I01-runtime-shell-review/final.md) 串起前九章的核心机制。
+
+想先判断这套教材的深度，可以直接阅读两个 S2 候选单元：
+
+- [M11：一条用户消息怎样穿过状态、请求投影和 Tool Loop](curriculum/units/M11/release-candidate.md)，建立第一次完整 Agent 运行地图；
+- [M12：谁在推进 Agent，从三层 Pull 到 Query 状态机](curriculum/units/M12/release-candidate.md)，深入控制权、双状态 owner、终止通道、取消与跨语言流协议。
+
+M12 同时附带 TypeScript `6/6`、Python `5/5` 的可执行实验和 11 张经实际渲染的局部图。它不是异步生成器语法复述，而是把 `yield` 前后顺序提升为状态一致性、背压、consumer close 和企业 RunCoordinator 设计。
 
 ### 2. Codex 主控 + Claude Code/DeepSeek 双闸门
 
@@ -112,7 +119,7 @@ npm run agent -- --prompt "先列出五个 Markdown 文件，再总结项目结�
 npm run agent -- --grant-executable rg
 ```
 
-当前验证基线为 TypeScript Agent `34/34`、strict typecheck 通过、Python Agent `11/11`、Python ConversationStore `13/13`，以及 H2/H1/S0 全部累计回归通过。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
+当前验证基线为 TypeScript Agent `34/34`、strict typecheck 通过、Python Agent `11/11`、Python ConversationStore `13/13`，以及 H2/H1/S0 全部累计回归通过。M12 另有 TypeScript `6/6`、Python `5/5` 的 Query 控制实验。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
 
 ## 当前课程地图
 
@@ -121,7 +128,7 @@ npm run agent -- --grant-executable rg
 | S0 | TypeScript、异步生成器、Node 运行时、可验证源码追踪 | M01-M04 已发布 |
 | S1 | 运行表面、配置与信任、状态、能力投影、生命周期 | M05-M09 已发布 |
 | I01 | M01-M09 核心机制串联复习 | 已发布 |
-| S2 | 消息、Query、模型请求与 Tool Loop | M10-M11 发布候选，M12 进行中 |
+| S2 | 消息、Query、模型请求与 Tool Loop | M10-M12 发布候选，M13 下一步 |
 | S3-S7 | Context、扩展系统、多 Agent、恢复、安全与治理 | 动态规划 |
 
 课程没有最低章节数。当前设计包是一张工作地图，不是不可修改的目录合同；后续研究可以合章、拆章或调整顺序，但不能因此遗漏重要机制或破坏 Harness 契约。
@@ -165,4 +172,4 @@ npm run agent -- --grant-executable rg
 
 ---
 
-项目正在沿 S2 继续推进：下一步是把 `query()` / `queryLoop()` 的异步生成器控制流、事件消费、取消传播和结束判定讲透，并让 Harness 的 QueryEvent 与 LoopDecision 从“能运行”升级为“能解释、能验证、能扩展”。
+项目正在沿 S2 继续推进：下一步是 M13 请求投影，解释 durable conversation 为什么不等于本次模型请求，以及 compact boundary、tool result pairing、正规化和 Provider payload 怎样共同形成合法、可审计的请求视图。

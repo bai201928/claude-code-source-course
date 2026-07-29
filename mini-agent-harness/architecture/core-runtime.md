@@ -33,9 +33,9 @@ The loop has one durable message owner. Each `ConversationStore` binds exactly o
 | --- | --- | --- |
 | Released S0 / M01-M04 | runtime validation, legal state transitions, pull-driven events, cancellation/resource boundaries and traceable call evidence | H0 domain core and cumulative regression |
 | Released S1 / M05-M09 | surface/core separation, configuration provenance, immutable request state, capability projection and budgeted lifecycle | H1 runtime shell around the H0 core |
-| Approved S2 work from M10-M11 | durable message ownership, request projection, provider boundary and paired Tool Loop | H2-in-progress single-agent vertical slice |
+| Approved S2 work from M10-M12 | durable message ownership, request projection, provider boundary, paired Tool Loop and run-channel separation | H2-in-progress single-agent vertical slice |
 
-The third row is an implementation lead, not an S2 release claim. Streaming assembly, parallel tools and the remaining M12-M15 teaching mechanisms stay deferred until their units close the corresponding evidence and learning loops.
+The third row is an implementation lead, not an S2 release claim. Streaming assembly, parallel tools and the remaining M13-M15 teaching mechanisms stay deferred until their units close the corresponding evidence and learning loops.
 
 ## Ownership
 
@@ -93,6 +93,20 @@ Provider failure produces a failed run while retaining previously committed inpu
 ## Observability
 
 `TraceRecorder` records correlation metadata: run/request/tool IDs, revisions, counts, status, turn and error category. Prompt text, tool input, tool output, HTTP body and authorization headers are deliberately excluded. User-visible `AgentEvent` is a separate stream because final assistant text is product output, not telemetry; failures in that observer are isolated and cannot break message pairing or own the Tool Loop.
+
+## Run channels
+
+The current runtime deliberately keeps three channels separate:
+
+```text
+ConversationStore            durable message and pairing state
+AgentEventSink               observer-facing process events
+Promise<AgentRunSummary>     one terminal run result
+```
+
+`AgentRuntime` owns the active run and next model iteration. It does not wait for an observer to feed events back into loop state. Awaiting the event sink can slow the current runtime, but a sink failure is reduced to metadata-only diagnostics and cannot decide completion, cancellation or tool pairing.
+
+This milestone does not expose a pull-based `AgentRunStream`. Adding an async-iterable facade without a bounded buffer and close-to-abort contract would introduce an unowned queue. M14 will revisit the public shape together with real SSE assembly, upstream backpressure, multi-observer fan-out and a terminal-summary channel. Until then, caller cancellation is explicit through `AbortSignal`; abandoning the returned Promise is not a business cancellation.
 
 ## Scope boundary
 

@@ -1,3 +1,6 @@
+import type { AgentRunStream } from './stream.ts'
+import type { ModelStreamEvent } from './streamEvents.ts'
+
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject
 export type JsonObject = { [key: string]: JsonValue }
@@ -47,6 +50,8 @@ export interface ModelAdapter {
   readonly provider: string
   readonly model: string
   complete(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse>
+  /** Optional M14 pull path. Existing complete-only adapters remain valid. */
+  stream?(request: ModelRequest, signal: AbortSignal): Promise<AgentRunStream<ModelStreamEvent>>
 }
 
 export class ModelProtocolError extends Error {}
@@ -65,4 +70,3 @@ export class ModelTransportError extends Error {
     this.status = status
   }
 }
-

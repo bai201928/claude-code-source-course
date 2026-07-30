@@ -4,7 +4,7 @@
 
 这个仓库同时是一套**源码级 Claude Code 教材**、一条**可复核的教材生产流水线**，以及一个随学习逐步长成的 **Mini Agent Harness**。目标不是记住某几个私有函数名，而是获得可以迁移到企业 Agent 系统的能力：看懂源码、还原运行机制、验证关键判断、修改与复现设计，并在面试中把代码事实讲成系统设计。
 
-当前进度：`S0 + S1 已原子发布` · `M01-M09 共 9 个正式单元` · `1 个串联复习章` · `S2/M10-M13 已完成发布候选` · `Harness 0.2 / H2-in-progress`
+当前进度：`S0 + S1 已原子发布` · `M01-M09 共 9 个正式单元` · `1 个串联复习章` · `S2/M10-M14 发布候选` · `Harness 0.2 / H2-in-progress`
 
 ## 它解决什么问题
 
@@ -35,13 +35,14 @@ flowchart LR
 
 建议从 [S0 发布说明](curriculum/stages/S0/release-summary.md) 开始，再读 [S1 发布说明](curriculum/stages/S1/release-summary.md)。完成 M01-M09 后，可以用 [I01：从一次启动到安全收尾](curriculum/interludes/I01-runtime-shell-review/final.md) 串起前九章的核心机制。
 
-想先判断这套教材的深度，可以直接阅读三个 S2 候选单元：
+想先判断这套教材的深度，可以直接阅读四个 S2 候选单元：
 
 - [M11：一条用户消息怎样穿过状态、请求投影和 Tool Loop](curriculum/units/M11/release-candidate.md)，建立第一次完整 Agent 运行地图；
 - [M12：谁在推进 Agent，从三层 Pull 到 Query 状态机](curriculum/units/M12/release-candidate.md)，深入控制权、双状态 owner、终止通道、取消与跨语言流协议；
-- [M13：对话里存在，为什么请求里看不见](curriculum/units/M13/release-candidate.md)，区分 durable、query、API、wire 四层对象，解释请求正规化、tool pairing、跨轮 replacement state 与 Provider 参数装配。
+- [M13：对话里存在，为什么请求里看不见](curriculum/units/M13/release-candidate.md)，区分 durable、query、API、wire 四层对象，解释请求正规化、tool pairing、跨轮 replacement state 与 Provider 参数装配；
+- [M14：一条 SSE 怎样成为 Agent 能继续执行的消息](curriculum/units/M14/release-candidate.md)，闭合 indexed assembly、终态回写、三类 fallback、四种停止原因、usage/cost/span 与有界流契约。
 
-M12 附带 TypeScript `6/6`、Python `5/5` 的 Query 控制实验和 11 张局部图；M13 附带 TypeScript `9/9`、Python `8/8` 的请求投影实验和 17 张局部图。两章的 Mermaid 均实际生成 SVG，事实与教学闸门均已闭合。
+M12 附带 TypeScript `6/6`、Python `5/5` 的 Query 控制实验和 11 张局部图；M13 附带 TypeScript `9/9`、Python `8/8` 的请求投影实验和 17 张局部图；M14 附带 TypeScript `4/4`、Python `3/3` 的流式组装实验和 13 张局部图。三章的 Mermaid 均实际生成 SVG，事实与教学闸门均已闭合。
 
 ### 2. Codex 主控 + Claude Code/DeepSeek 双闸门
 
@@ -93,6 +94,7 @@ flowchart LR
 - permission-aware Tool Loop 与 `read/list/search/command` 工作区工具；
 - tool call/result 配对、错误反馈、取消补齐、single-flight 与最大轮次；
 - credential 隔离和 metadata-only Trace；
+- fixed-capacity、single-consumer 的 provider-neutral stream，支持背压和 close-to-abort/cleanup；
 - TypeScript 主实现、Python 行为镜像与累计回归。
 
 它刻意不追求复刻 Claude Code，也不复制其私有实现。项目只选择足以展示核心工程判断的机制，并为未来的流式聚合、工具并发、Context 压缩、Hook/Skill/MCP、Subagent、恢复和 Sandbox 留出真实演进路径。更完整的能力与边界见 [Mini Agent Harness README](mini-agent-harness/README.md)。
@@ -123,7 +125,7 @@ npm run agent -- --prompt "先列出五个 Markdown 文件，再总结项目结�
 npm run agent -- --grant-executable rg
 ```
 
-当前验证基线为 TypeScript Agent `36/36`、strict typecheck 通过、Python Agent `12/12`、Python ConversationStore `13/13`，以及 H2/H1/S0 全部累计回归通过。独立单元实验为 M12 TypeScript `6/6`、Python `5/5`，M13 TypeScript `9/9`、Python `8/8`。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
+当前验证基线为 TypeScript `npm test` 全部通过（配置 `1/1`、Agent `23/23`、Provider `7/7`、Tool `5/5`、Stream `4/4`），strict typecheck 通过，Python Agent `12/12`、ConversationStore `13/13`、Stream `4/4`，以及 H2/H1/S0 全部累计回归通过。独立单元实验为 M12 TypeScript `6/6`、Python `5/5`，M13 TypeScript `9/9`、Python `8/8`，M14 TypeScript `4/4`、Python `3/3`。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
 
 ## 当前课程地图
 
@@ -132,7 +134,7 @@ npm run agent -- --grant-executable rg
 | S0 | TypeScript、异步生成器、Node 运行时、可验证源码追踪 | M01-M04 已发布 |
 | S1 | 运行表面、配置与信任、状态、能力投影、生命周期 | M05-M09 已发布 |
 | I01 | M01-M09 核心机制串联复习 | 已发布 |
-| S2 | 消息、Query、模型请求与 Tool Loop | M10-M13 发布候选，M14 下一步 |
+| S2 | 消息、Query、模型请求与 Tool Loop | M10-M14 发布候选，M15 收口 Tool Loop |
 | S3-S7 | Context、扩展系统、多 Agent、恢复、安全与治理 | 动态规划 |
 
 课程没有最低章节数。当前设计包是一张工作地图，不是不可修改的目录合同；后续研究可以合章、拆章或调整顺序，但不能因此遗漏重要机制或破坏 Harness 契约。
@@ -155,7 +157,7 @@ npm run agent -- --grant-executable rg
 
 ## 证据与公开边界
 
-这个仓库公开原创教材、实验、Harness 与审查记录，不分发本地 Claude Code 源码快照、Graphify 缓存或外部参考仓库。教材中的源码事实来自特定本地快照，运行验证、官方公开行为与设计推断会被明确区分。
+这个仓库公开原创教材、实验、Harness 与审查记录，不分发本地 Claude Code 源码快照、Graphify 缓存或外部参考仓库。教材中的源码事实来自特定本地快照，运行验证、官方公开行为与设计推断会被明确区分。M14 新增的 Harness bounded stream 仍是 clean-room 迁移设计，不代表复制 Claude Code 私有实现。
 
 如需复现完整源码研究流程，请自行合法准备源码到 `claude-code-CLI/`。该目录以及 `repos/`、`graphify-out/`、`.env*`、本机 Codex/Claude 配置和运行态审查工作区均被 Git 忽略。
 
@@ -169,11 +171,12 @@ npm run agent -- --grant-executable rg
 - 为什么工具失败也是协议消息，取消后仍要维护 tool call/result 配对；
 - 配置、凭据、Trace 与子进程环境如何隔离；
 - single-flight、max turns、AbortSignal 和 budgeted shutdown 分别控制什么风险。
+- 为什么有限缓冲、单消费者与 close-to-abort 是流式接口的行为契约，而不是性能细节。
 
 一条准确的简历描述是：
 
-> 基于 Claude Code 源码研究设计并实现 TypeScript/Python Agent Harness：以 revisioned conversation 为状态核心，完成请求与能力快照、OpenAI-compatible 模型适配、Permission-aware Tool Loop、取消与配对恢复、工作区受限工具和脱敏 Trace；建立 Codex 主控、Claude Code/DeepSeek 事实与教学双闸门，并用源码核验、双语言实验和累计回归保障教材与实现一致。
+> 基于 Claude Code 源码研究设计并实现 TypeScript/Python Agent Harness：以 revisioned conversation 为状态核心，完成请求与能力快照、OpenAI-compatible 模型适配、Permission-aware Tool Loop、有界流背压与关闭收敛、取消与配对恢复、工作区受限工具和脱敏 Trace；建立 Codex 主控、Claude Code/DeepSeek 事实与教学双闸门，并用源码核验、双语言实验和累计回归保障教材与实现一致。
 
 ---
 
-项目正在沿 S2 继续推进：下一步是 M14 模型流，研究 `messages.create(stream=true)` 返回的 SSE 片段怎样被消费、聚合、取消和重试，并怎样形成可提交的 assistant message。
+项目正在沿 S2 继续推进：M14 已闭合模型流的事件组装、重试、取消、fallback、usage/cost/span 事实与有界流契约；下一步是 M15 Tool Loop 的并发、权限、结果反馈和终止收口。用户已授权在 M26 前完成教材，因此 S3/S4 将在 S2 完成后按真实闭环重排，保留全部主题而不维持旧 42 单元数量。

@@ -2,7 +2,7 @@
 
 版本：`H2-in-progress`
 
-当前来源单元：M10、M11、M12、M13，以及用户批准的 S0/S1 核心纵切升级。S2 尚未完成；本文件冻结已经验证并合入累计 Harness 的消息所有权、请求投影、Provider 边界、单 Agent Tool Loop 和运行通道分层。流式聚合、完整 Context Pipeline 与并发 Tool 调度仍由后续单元演进。
+当前来源单元：M10、M11、M12、M13、M14，以及用户批准的 S0/S1 核心纵切升级。S2 尚未完成；本文件冻结已经验证并合入累计 Harness 的消息所有权、请求投影、Provider 边界、单 Agent Tool Loop、运行通道分层和有界单消费者流契约。Provider-specific SSE 组装、Runtime 消费、完整 Context Pipeline 与并发 Tool 调度仍由后续单元演进。
 
 ## M10 消息与会话不变量
 
@@ -40,8 +40,8 @@
 68. Durable state、observer event 与 terminal summary 是三个不同协议：`ConversationStore` 拥有跨迭代消息事实，`AgentEventSink` 只观察用户可见过程，`AgentRunSummary` 是 `submit()` 的唯一显式终值。三者不能共享一个可变数组，也不能用 event sink 是否成功决定 Tool Loop 的下一状态。
 69. `AgentRuntime` 拥有当前 active run 与模型迭代状态；下一轮请求由已提交的 assistant/tool result 和新的 request/capability snapshot 构造，不依赖 UI/CLI observer 把事件回传。Observer 可以因为被 await 而影响运行速度，但它的异常只能降级为诊断，不能接管业务完成、取消或消息配对。
 70. `completed`、`cancelled`、`failed` 与 `max-turns` 是业务 summary；外部调用方放弃等待、CLI 输出失败或未来 stream consumer close 不能自动伪装成其中任一状态。当前 Promise API 没有 consumer-close 通道，调用方取消必须显式触发 `AbortSignal`。
-71. 本阶段不只为模仿 Claude Code 把稳定 `Promise<AgentRunSummary> + AgentEventSink` 改写为 `AsyncGenerator`。Pull-based `AgentRunStream` 延后到 M14，并必须同时定义有限缓冲、SSE 上游背压、consumer close 到 abort 的传播、多观察者分发和 terminal 获取方式。
-72. 禁止用无界 async queue 简单包装 callback sink；没有 buffer owner、关闭协议和资源收敛的流外观不属于 H2 能力。
+71. M14 已加入独立 `BoundedAgentRunStream`：固定容量、单消费者、consumer close 到 owner abort/cleanup、terminal metadata；它暂不替代稳定的 `Promise<AgentRunSummary> + AgentEventSink`，也未接入完整 Runtime Tool Loop。
+72. 禁止用无界 async queue 简单包装 callback sink；没有 buffer owner、关闭协议和资源收敛的流外观不属于 H2 能力。M14 的 bounded stream 只接受单消费者，multi-observer fan-out 继续 defer。
 
 ## M13 请求投影不变量
 

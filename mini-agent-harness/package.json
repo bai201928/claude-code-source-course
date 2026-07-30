@@ -7,7 +7,7 @@
   "scripts": {
     "agent": "node --env-file-if-exists=.env.local typescript/agent/cli.ts",
     "demo": "node typescript/agent/demo.ts",
-    "test": "node typescript/agent/config.test.ts && node typescript/agent/runtime.test.ts && node typescript/agent/openaiCompatibleAdapter.test.ts && node typescript/agent/tools.test.ts",
+    "test": "node typescript/agent/config.test.ts && node typescript/agent/runtime.test.ts && node typescript/agent/openaiCompatibleAdapter.test.ts && node typescript/agent/tools.test.ts && node typescript/agent/stream.test.ts",
     "test:all": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-agent-regression.ps1",
     "typecheck": "powershell -NoProfile -ExecutionPolicy Bypass -File typescript/typecheck.ps1"
   },

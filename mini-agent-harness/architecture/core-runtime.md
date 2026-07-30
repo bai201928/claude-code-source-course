@@ -33,9 +33,9 @@ The loop has one durable message owner. Each `ConversationStore` binds exactly o
 | --- | --- | --- |
 | Released S0 / M01-M04 | runtime validation, legal state transitions, pull-driven events, cancellation/resource boundaries and traceable call evidence | H0 domain core and cumulative regression |
 | Released S1 / M05-M09 | surface/core separation, configuration provenance, immutable request state, capability projection and budgeted lifecycle | H1 runtime shell around the H0 core |
-| Approved S2 work from M10-M13 | durable message ownership, request projection, provider boundary, paired Tool Loop and run-channel separation | H2-in-progress single-agent vertical slice |
+| Approved S2 work from M10-M14 | durable message ownership, request projection, provider boundary, paired Tool Loop, run-channel separation and bounded stream lifecycle | H2-in-progress single-agent vertical slice |
 
-The third row is an implementation lead, not an S2 release claim. Streaming assembly, parallel tools and the remaining M14-M15 teaching mechanisms stay deferred until their units close the corresponding evidence and learning loops.
+The third row is an implementation lead, not an S2 release claim. M14 now contributes a provider-neutral bounded stream contract and standalone assembly experiments; provider-specific SSE assembly, Runtime consumption, parallel tools and the remaining M14-M15 teaching mechanisms stay deferred until their units close the corresponding evidence and learning loops.
 
 ## Ownership
 
@@ -77,7 +77,7 @@ The current preview is deliberately per result. It is not presented as Claude Co
 3. runtime validation of text, usage, function calls and terminal `finish_reason`;
 4. typed, sanitized transport/protocol errors.
 
-It does not own the conversation, choose tools, execute tools, retry a turn, or decide whether the loop continues. The non-streaming adapter is deliberate for this milestone. A future streaming adapter can expose an `AsyncIterable` without changing durable message ownership.
+It does not own the conversation, choose tools, execute tools, retry a turn, or decide whether the loop continues. The non-streaming adapter remains the deliberate Runtime path for this milestone. M14's optional adapter stream exposes an independent bounded `AgentRunStream`; it does not change durable message ownership or silently switch the Runtime to streaming semantics.
 
 The credential is read from `MINI_AGENT_API_KEY` only at the process edge. The credential resolver and Provider path do not insert it into `ConfigurationSnapshot`, `RuntimeContext`, `RequestContext`, messages, trace attributes, command environments, or provider errors. This guarantee does not cover a user placing a credential in the prompt or passing it through an explicitly granted executable's arbitrary argv. Partial responses terminated by `length`, `content_filter`, or another non-success reason fail explicitly instead of becoming a successful assistant turn.
 
@@ -122,7 +122,7 @@ Promise<AgentRunSummary>     one terminal run result
 
 `AgentRuntime` owns the active run and next model iteration. It does not wait for an observer to feed events back into loop state. Awaiting the event sink can slow the current runtime, but a sink failure is reduced to metadata-only diagnostics and cannot decide completion, cancellation or tool pairing.
 
-This milestone does not expose a pull-based `AgentRunStream`. Adding an async-iterable facade without a bounded buffer and close-to-abort contract would introduce an unowned queue. M14 will revisit the public shape together with real SSE assembly, upstream backpressure, multi-observer fan-out and a terminal-summary channel. Until then, caller cancellation is explicit through `AbortSignal`; abandoning the returned Promise is not a business cancellation.
+The M14 milestone exposes a bounded, single-consumer `AgentRunStream` with owner abort, source cleanup and a metadata-only terminal summary. It is deliberately separate from the Runtime's Promise result and EventSink. Provider SSE assembly, upstream-specific backpressure, multi-observer fan-out and streaming Tool Loop consumption remain deferred; abandoning the Runtime Promise is not a business cancellation.
 
 ## Scope boundary
 
@@ -141,7 +141,7 @@ Implemented now:
 
 Explicitly deferred:
 
-- SSE streaming assembly and parallel tool scheduling;
+- Provider-specific SSE streaming assembly, Runtime streaming consumption and parallel tool scheduling;
 - aggregate result budgeting, external result storage, context compression and memory;
 - Hook, Skill, MCP and Plugin execution;
 - subagents and teams;

@@ -2,7 +2,7 @@
 
 这是随 Claude Code 源码教材累计演进的 clean-room Agent Harness。它不复制 Claude Code 私有实现；当前目标是用一条边界清楚、可运行、可测试的单 Agent 纵切，证明学习者真正理解了消息、状态、请求投影、模型调用、工具反馈、权限、取消和收尾怎样协作。
 
-当前版本：`H2-in-progress / integrated vertical slice 0.2`
+当前版本：`H2-in-progress / integrated vertical slice 0.2 + M14 bounded stream contract`
 
 ## 现在已经能做什么
 
@@ -42,6 +42,7 @@ flowchart LR
 - 工具失败/拒绝反馈、取消后补齐配对、单会话 single-flight 和最大轮次；
 - 不记录 prompt、tool payload、HTTP body 或 credential 的结构化 Trace；
 - TypeScript 主实现、Python 核心行为镜像，以及 H0/H1/H2 累计回归。
+- M14 已加入 provider-neutral 的 `BoundedAgentRunStream`：固定容量、单消费者、terminal metadata、consumer close 到 owner abort/cleanup 的契约；现有 `complete()` 适配器保持兼容。
 
 详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，行为不变量见 [contracts/h2-contract.md](contracts/h2-contract.md)。
 
@@ -127,7 +128,7 @@ npm run agent -- --grant-executable rg --grant-executable node
 
 真实 API 冒烟与确定性测试分开。模型可达不证明 Tool Loop 正确，fake provider 测试通过也不伪装成真实网络验证。
 
-当前验证基线（2026-07-29）：`npm test` 为 `36/36`，本地锁定编译器的 strict typecheck 通过，Python Agent 为 `12/12`；`npm run test:all` 为 Agent `4/4`，其中包含 H2 `4/4`、H1 `12/12` 和 S0 `15/15`。M13 独立投影实验另有 TypeScript `9/9`、Python `8/8`。
+当前验证基线（2026-07-30）：`npm test` 的既有 Agent/Provider/Tool 测试与新增 bounded stream 测试全部通过，本地锁定编译器 strict typecheck 通过；Python Agent 与新增 stream mirror 测试全部通过；`npm run test:all` 的累计回归保持通过。M13 独立投影实验为 TypeScript `9/9`、Python `8/8`；M14 独立 streaming assembler 实验为 TypeScript `4/4`、Python `4/4`，Harness stream contract 为 TypeScript `4/4`、Python `4/4`。
 
 ## 为什么适合简历和面试讲解
 
@@ -146,4 +147,4 @@ npm run agent -- --grant-executable rg --grant-executable node
 
 ## 当前边界
 
-本版本有意不实现 SSE 流式聚合、工具并发、完整 Context 压缩、aggregate tool-result budget、外置结果恢复、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox、分布式执行和完整 OTel。它们会随后续教材机制逐步接入；本轮不为了显得“功能多”而提前制造一组空接口。
+本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 消费、工具并发、streaming tool execution、透明 model fallback、完整 Context 压缩、aggregate tool-result budget、外置结果恢复、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox、分布式执行和完整 OTel/cost ledger。M14 只合入有界流、assembler/usage 的独立行为契约；后续单元通过真实实验后再决定 merge、defer 或 reject。

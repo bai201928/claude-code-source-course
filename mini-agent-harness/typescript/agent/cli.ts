@@ -116,6 +116,9 @@ function eventSink(
         case 'tool.started':
           stdout.write(`[tool ${event.toolName} started]\n`)
           break
+        case 'tool.progress':
+          stdout.write(`[tool ${event.toolName} ${event.progress.stage}]\n`)
+          break
         case 'tool.finished':
           stdout.write(`[tool ${event.toolName} ${event.status}]\n`)
           break

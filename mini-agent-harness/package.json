@@ -1,13 +1,13 @@
 {
   "name": "claude-code-study-mini-agent-harness",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "A clean-room, portfolio-scale single-agent harness evolved from the Claude Code source course.",
   "scripts": {
     "agent": "node --env-file-if-exists=.env.local typescript/agent/cli.ts",
     "demo": "node typescript/agent/demo.ts",
-    "test": "node typescript/agent/config.test.ts && node typescript/agent/runtime.test.ts && node typescript/agent/openaiCompatibleAdapter.test.ts && node typescript/agent/tools.test.ts && node typescript/agent/stream.test.ts",
+    "test": "node typescript/agent/config.test.ts && node typescript/agent/runtime.test.ts && node typescript/agent/openaiCompatibleAdapter.test.ts && node typescript/agent/tools.test.ts && node typescript/agent/toolScheduler.test.ts && node typescript/agent/stream.test.ts",
     "test:all": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-agent-regression.ps1",
     "typecheck": "powershell -NoProfile -ExecutionPolicy Bypass -File typescript/typecheck.ps1"
   },

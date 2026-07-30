@@ -1,6 +1,6 @@
-# S0-S1 已确认知识摘要
+# S0-S2 已确认知识摘要
 
-状态：`S1 已发布`
+状态：`S2 已发布`
 
 S0 的目标不是让学习者记住四组 API，而是建立阅读后续 Claude Code 主线的基础动作：
 
@@ -47,6 +47,26 @@ H0 仍不包含真实模型、Tool Loop、持久化、权限、Sandbox、后台�
 H1 在 H0 上累计 RuntimeSurface、ConfigurationSnapshot、RuntimeContext/SessionStateStore/RequestContext、CapabilityCatalog/CapabilitySnapshot/ExecutableRegistry/SystemContextBuilder 与 LifecycleCoordinator。TypeScript/Python 行为契约均已通过，H1 阶段回归为 12/12，并包含 S0 15/15。
 
 H1 仍不包含真实模型、完整消息会话 owner、Query/Tool Loop、完整持久化、权限控制面、Sandbox、后台任务或多 Agent；S2 从消息与 Query 主循环继续演进。
+
+## S2 已确认结论
+
+- REPL 与 SDK/Headless 的长期消息 owner 不同：REPL 由本地 `messages/messagesRef` 直接进入 `query()`，Headless 由 `print.ts` 的 `mutableMessages` 和 `QueryEngine` 适配；两条路径在 `query()` 汇合，不能写成 REPL 必经 QueryEngine。
+- durable conversation、一次 Query state、API-normalized messages 与最终 wire params 是不同对象。请求投影不能反向修改长期历史。
+- envelope ID、provider response ID、tool-use ID、Transcript parent 与 session ID 各自表达不同关系；Provider `user` role 也不能替代 human/tool-result 领域分类。
+- `query()` 用 `yield*` 暴露过程事件和正常 terminal；`for await` 只能观察 yielded values。Abort、consumer close、throw 与业务 terminal 是不同终止通道。
+- `queryLoop()` 是显式 while 状态机。assistant、tool result、attachment、compact 或 fallback 的提交顺序会改变下一轮状态，不能用一个递归“再问一次”隐藏 owner。
+- Context 不是一个全局裁剪函数：history boundary、tool-result budget、request-only context、normalization、pairing repair 与 Provider params 分属不同投影阶段和状态 owner。
+- 模型流按 content index 组装；完整 block 可以早于 response terminal 交付，usage/stop reason 可能在稍后 finalize。已交付对象的受控 late mutation 与请求投影污染 durable history 是两个不同问题。
+- retry、model fallback、non-streaming fallback、timeout、caller cancel 与 consumer close 的 owner 和重放风险不同。tombstone/discard 不能回滚已经发生的工具副作用。
+- Tool Loop 的继续条件来自实际 assistant `tool_use` block，不依赖 `stop_reason`。schema validation、dynamic concurrency-safe、Hook、Permission、handler 和 Sandbox 是不同边界。
+- response-complete 路径把连续 safe calls 组成并发 batch，unsafe call 形成 exclusive barrier；执行完成可乱序，但协议配对、context modifier 和 durable publication 需要稳定归属与顺序。
+- Claude Code 快照的 streaming 与 response-complete executor 共享 `runToolUse()` 主链但并不完全等价。H2 的统一 scheduler 是设计迁移，不能倒写成快照事实。
+
+## H2 能力
+
+H2 / Harness `0.3.0` 在 H0/H1 上累计了 revisioned `ConversationStore`、单 Runtime owner 与 active-run lease、请求/能力快照、history/context/preview 投影、strict pairing、OpenAI-compatible Provider、有界单消费者流，以及带 safe batch、exclusive barrier、固定 worker pool 和 ordered publication 的 Permission-aware Tool Loop。TypeScript 主实现与 Python 行为镜像均通过统一回归。
+
+H2 仍不承诺 Provider-specific SSE parser 或 Runtime streaming tool execution，也不包含完整 Context 压缩/记忆、Hook/Skill/MCP/Plugin、多 Agent、Transcript 恢复、Sandbox、分布式执行或生产级 OTel/cost ledger。后续阶段继续在该契约上演进。
 
 ## 证据边界
 

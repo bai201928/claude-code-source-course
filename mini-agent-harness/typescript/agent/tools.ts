@@ -14,20 +14,35 @@ import {
 export type ToolContext = Readonly<{
   workspace: string
   signal: AbortSignal
+  reportProgress?: (progress: ToolProgress) => void | Promise<void>
 }>
+
+export type ToolProgress = Readonly<{
+  stage: string
+  completed?: number
+  total?: number
+}>
+
+export type ToolContextUpdate = Readonly<Record<string, unknown>>
 
 export type AgentTool = Readonly<{
   name: string
   description: string
   inputSchema: Readonly<Record<string, unknown>>
   risk: ToolRisk
+  isConcurrencySafe?(input: Readonly<Record<string, unknown>>): boolean
   permissionRequest(input: Readonly<Record<string, unknown>>): PermissionRequest
   execute(input: Readonly<Record<string, unknown>>, context: ToolContext): Promise<unknown>
+  contextUpdate?(
+    input: Readonly<Record<string, unknown>>,
+    output: unknown,
+  ): ToolContextUpdate | undefined
 }>
 
 export type ToolDispatchResult = Readonly<{
   decision: PermissionDecision
   output: unknown
+  contextUpdate?: ToolContextUpdate
 }>
 
 export class ToolInputError extends Error {}
@@ -61,6 +76,22 @@ export class AgentToolRegistry {
     )
   }
 
+  isConcurrencySafe(
+    name: string,
+    input: Readonly<Record<string, unknown>>,
+    visibleNames: ReadonlySet<string>,
+  ): boolean {
+    if (!visibleNames.has(name)) return false
+    const tool = this.#tools.get(name)
+    if (!tool) return false
+    try {
+      validateToolInput(input, tool.inputSchema)
+      return tool.isConcurrencySafe?.(input) ?? false
+    } catch {
+      return false
+    }
+  }
+
   async dispatch(
     name: string,
     input: Readonly<Record<string, unknown>>,
@@ -72,6 +103,7 @@ export class AgentToolRegistry {
     if (!visibleNames.has(name)) throw new ToolExecutionError(`tool is not visible: ${name}`)
     const tool = this.#tools.get(name)
     if (!tool) throw new ToolExecutionError(`visible tool has no executable handler: ${name}`)
+    validateToolInput(input, tool.inputSchema)
     const decision = Object.freeze(await abortableDecision(
       gate.decide(tool.permissionRequest(input), context.signal),
       context.signal,
@@ -80,9 +112,11 @@ export class AgentToolRegistry {
     throwIfAborted(context.signal)
     const output = await tool.execute(input, context)
     throwIfAborted(context.signal)
+    const contextUpdate = tool.contextUpdate?.(input, output)
     return Object.freeze({
       decision,
       output,
+      ...(contextUpdate ? { contextUpdate: structuredClone(contextUpdate) } : {}),
     })
   }
 }
@@ -133,6 +167,7 @@ function createReadFileTool(guard: WorkspaceGuard): AgentTool {
       additionalProperties: false,
     },
     risk: 'read',
+    isConcurrencySafe: () => true,
     permissionRequest: () => ({ toolName: 'read_file', risk: 'read' }),
     async execute(input, context) {
       throwIfAborted(context.signal)
@@ -170,6 +205,7 @@ function createListFilesTool(guard: WorkspaceGuard, rgExecutable: string): Agent
       additionalProperties: false,
     },
     risk: 'read',
+    isConcurrencySafe: () => true,
     permissionRequest: () => ({ toolName: 'list_files', risk: 'read' }),
     async execute(input, context) {
       const cwd = await guard.resolveExisting(optionalString(input.path, 'path') ?? '.')
@@ -210,6 +246,7 @@ function createSearchTextTool(guard: WorkspaceGuard, rgExecutable: string): Agen
       additionalProperties: false,
     },
     risk: 'read',
+    isConcurrencySafe: () => true,
     permissionRequest: () => ({ toolName: 'search_text', risk: 'read' }),
     async execute(input, context) {
       const query = requireString(input.query, 'query')
@@ -252,6 +289,7 @@ function createRunCommandTool(guard: WorkspaceGuard): AgentTool {
       additionalProperties: false,
     },
     risk: 'execute',
+    isConcurrencySafe: () => false,
     permissionRequest(input) {
       return {
         toolName: 'run_command',
@@ -488,6 +526,79 @@ function requireIdentifier(value: string, name: string): void {
   if (!/^[A-Za-z][A-Za-z0-9_.:-]*$/.test(value)) {
     throw new Error(`${name} must use the portable ASCII identifier form`)
   }
+}
+
+function validateToolInput(
+  input: Readonly<Record<string, unknown>>,
+  schema: Readonly<Record<string, unknown>>,
+): void {
+  if (schema.type !== undefined && schema.type !== 'object') {
+    throw new ToolInputError('tool input schema must describe an object')
+  }
+  const properties = isRecord(schema.properties) ? schema.properties : {}
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((name): name is string => typeof name === 'string')
+    : []
+  for (const name of required) {
+    if (!(name in input)) throw new ToolInputError(`${name} is required`)
+  }
+  if (schema.additionalProperties === false) {
+    for (const name of Object.keys(input)) {
+      if (!(name in properties)) throw new ToolInputError(`${name} is not allowed`)
+    }
+  }
+  for (const [name, value] of Object.entries(input)) {
+    const propertySchema = properties[name]
+    if (!isRecord(propertySchema)) continue
+    validateSchemaValue(value, propertySchema, name)
+  }
+}
+
+function validateSchemaValue(
+  value: unknown,
+  schema: Readonly<Record<string, unknown>>,
+  name: string,
+): void {
+  switch (schema.type) {
+    case 'string':
+      if (typeof value !== 'string') throw new ToolInputError(`${name} must be a string`)
+      break
+    case 'integer':
+      if (!Number.isInteger(value)) throw new ToolInputError(`${name} must be an integer`)
+      break
+    case 'number':
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new ToolInputError(`${name} must be a finite number`)
+      }
+      break
+    case 'boolean':
+      if (typeof value !== 'boolean') throw new ToolInputError(`${name} must be a boolean`)
+      break
+    case 'array':
+      if (!Array.isArray(value)) throw new ToolInputError(`${name} must be an array`)
+      if (isRecord(schema.items)) {
+        value.forEach((item, index) => validateSchemaValue(item, schema.items as Record<string, unknown>, `${name}[${index}]`))
+      }
+      break
+    case 'object':
+      if (!isRecord(value)) throw new ToolInputError(`${name} must be an object`)
+      break
+  }
+  if (typeof value === 'number') {
+    if (typeof schema.minimum === 'number' && value < schema.minimum) {
+      throw new ToolInputError(`${name} must be at least ${schema.minimum}`)
+    }
+    if (typeof schema.maximum === 'number' && value > schema.maximum) {
+      throw new ToolInputError(`${name} must be at most ${schema.maximum}`)
+    }
+  }
+  if (Array.isArray(value) && typeof schema.maxItems === 'number' && value.length > schema.maxItems) {
+    throw new ToolInputError(`${name} has too many entries`)
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function compareNames(left: string, right: string): number {

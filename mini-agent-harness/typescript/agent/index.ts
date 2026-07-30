@@ -6,6 +6,6 @@ export * from './permissions.ts'
 export * from './requestProjector.ts'
 export * from './runtime.ts'
 export * from './testing.ts'
+export * from './toolScheduler.ts'
 export * from './tools.ts'
 export * from './trace.ts'
-

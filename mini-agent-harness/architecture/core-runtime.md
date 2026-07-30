@@ -17,9 +17,10 @@ flowchart LR
   RP --> MA["ModelAdapter"]
   MA --> A["assistant text / tool calls"]
   A --> CS
-  A --> TR["ToolRegistry"]
+  A --> TS["ToolScheduler plan"]
+  TS --> TR["ToolRegistry"]
   TR --> PG["PermissionGate"]
-  PG --> EX["bounded execution"]
+  PG --> EX["bounded safe batches / exclusive barriers"]
   EX --> RES["paired tool result"]
   RES --> CS
   CS -->|"next model iteration"| RP
@@ -33,9 +34,9 @@ The loop has one durable message owner. Each `ConversationStore` binds exactly o
 | --- | --- | --- |
 | Released S0 / M01-M04 | runtime validation, legal state transitions, pull-driven events, cancellation/resource boundaries and traceable call evidence | H0 domain core and cumulative regression |
 | Released S1 / M05-M09 | surface/core separation, configuration provenance, immutable request state, capability projection and budgeted lifecycle | H1 runtime shell around the H0 core |
-| Approved S2 work from M10-M14 | durable message ownership, request projection, provider boundary, paired Tool Loop, run-channel separation and bounded stream lifecycle | H2-in-progress single-agent vertical slice |
+| Released S2 / M10-M15 | durable message ownership, request projection, provider boundary, run-channel separation, bounded stream lifecycle and ordered concurrent Tool Loop | H2 / Harness 0.3.0 single-agent vertical slice |
 
-The third row is an implementation lead, not an S2 release claim. M14 now contributes a provider-neutral bounded stream contract and standalone assembly experiments; provider-specific SSE assembly, Runtime consumption, parallel tools and the remaining M14-M15 teaching mechanisms stay deferred until their units close the corresponding evidence and learning loops.
+M14 contributes a provider-neutral bounded stream contract and standalone assembly experiments. M15 contributes the explicit execution plan, bounded safe batches, exclusive barriers, ordered publication and exactly-once outcomes. Provider-specific SSE assembly and Runtime streaming consumption remain deferred.
 
 ## Ownership
 
@@ -52,6 +53,7 @@ The third row is an implementation lead, not an S2 release claim. M14 now contri
 | Model-visible tools | `CapabilitySnapshot` | request projector, registry | new iteration boundary |
 | Tool handlers | `AgentToolRegistry` | runtime | bootstrap registration |
 | Tool authorization | `PermissionGate` | runtime | one decision per dispatch |
+| Tool execution plan and bounded concurrency | `ToolScheduler` | runtime, metadata trace | one immutable plan per assistant tool-call block |
 | Shutdown report | `LifecycleCoordinator` | CLI | first shutdown caller |
 
 ## Request projection boundary
@@ -100,6 +102,8 @@ AND executable handler is registered
 
 Read-only workspace tools are allowed by the default policy. Commands are denied unless the executable receives an explicit unrestricted grant. The grant applies to arbitrary argv for that executable, so granting `node` or `python` is intentionally presented as high risk. This is a permission and process-control boundary, not a Sandbox: a granted process still runs with the host user's privileges, and terminating its direct child does not prove that every descendant exited. The project therefore does not claim argv profiles, process-tree containment, filesystem isolation, syscall filtering, container isolation or protection from a malicious granted executable.
 
+`ToolScheduler` separates planning from execution. Consecutive tools whose validated input is classified concurrency-safe form a bounded worker-pool batch; an unsafe or unclassified call becomes an exclusive barrier. Execution may finish out of order, but outcomes, durable `tool_result` messages and context updates are committed in the assistant block's original call order. This avoids letting completion timing become conversation order or create competing `ConversationStore` revisions. The unified scheduler is a clean-room migration and is not presented as an exact copy of Claude Code's response-complete and streaming executors.
+
 ## Cancellation and failure
 
 Cancellation is cooperative. The caller's `AbortSignal` reaches the model adapter, permission gate and tool handler. The runtime checks it again after an adapter resolves; dispatch also checks at entry, after an allowed permission decision and after tool resolution. A permission promise that wins its race just before abort therefore cannot start a new tool side effect, and a late model or tool response cannot turn an already-cancelled run into success. If cancellation arrives after an assistant message has introduced one or more tool calls, the runtime appends an error result for the current and every not-started call before returning. This preserves protocol pairing and prevents a later request from inheriting an unresolved call.
@@ -132,7 +136,7 @@ Implemented now:
 - request and capability snapshots per model iteration;
 - explicit history/context/preview request policy, strict post-projection validation and metadata report;
 - real OpenAI-compatible provider port;
-- sequential single-agent tool loop;
+- bounded concurrent single-agent tool loop with safe batches, exclusive barriers and ordered publication;
 - read/search/list tools and explicitly granted command executables;
 - permission denial, cancellation, error feedback and max turns;
 - interactive/headless CLI, JSON and event output;
@@ -141,7 +145,7 @@ Implemented now:
 
 Explicitly deferred:
 
-- Provider-specific SSE streaming assembly, Runtime streaming consumption and parallel tool scheduling;
+- Provider-specific SSE streaming assembly and Runtime streaming assistant/tool consumption;
 - aggregate result budgeting, external result storage, context compression and memory;
 - Hook, Skill, MCP and Plugin execution;
 - subagents and teams;

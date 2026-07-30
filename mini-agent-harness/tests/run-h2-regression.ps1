@@ -38,4 +38,4 @@ Invoke-H2Check 'Python conversation behavior' "$harnessRoot\python" {
   python -m unittest -v test_conversation_store.py
 }
 
-Write-Host "H2-in-progress regression: $passed/4 checks passed (including H1 12/12 and S0 15/15)"
+Write-Host "H2 regression: $passed/4 checks passed (including H1 12/12 and S0 15/15)"

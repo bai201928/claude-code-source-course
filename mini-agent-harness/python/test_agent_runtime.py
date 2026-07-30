@@ -17,6 +17,7 @@ from agent_runtime import (
     RequestProjectionPolicy,
     ScriptedModel,
     ToolContext,
+    ToolProgress,
     ToolRegistry,
     TraceRecorder,
 )
@@ -60,6 +61,7 @@ def fixture(
     gate: PermissionGate | None = None,
     trace: TraceRecorder | None = None,
     request_projection_policy: RequestProjectionPolicy | None = None,
+    max_tool_concurrency: int = 4,
 ) -> tuple[AgentRuntime, ConversationStore, TraceRecorder]:
     registry = ToolRegistry()
     for candidate in tools:
@@ -74,6 +76,7 @@ def fixture(
         conversation=store,
         trace=recorder,
         request_projection_policy=request_projection_policy,
+        max_tool_concurrency=max_tool_concurrency,
     )
     return runtime, store, recorder
 
@@ -244,6 +247,91 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(message, ToolResultMessage)
         )
         self.assertTrue(paired.is_error)
+        store.assert_request_ready(store.snapshot())
+
+    async def test_runtime_uses_bounded_safe_batches_and_ordered_publication(self) -> None:
+        timeline: list[str] = []
+        active = 0
+        peak = 0
+
+        def scheduled(name: str, safe: bool, delay: float) -> AgentTool:
+            async def execute(_values, context: ToolContext):
+                nonlocal active, peak
+                timeline.append(f"start:{name}")
+                active += 1
+                peak = max(peak, active)
+                if name == "B":
+                    assert context.report_progress is not None
+                    await context.report_progress(ToolProgress("half", 1, 2))
+                await asyncio.sleep(delay)
+                active -= 1
+                timeline.append(f"end:{name}")
+                return name
+
+            risk = "read" if safe else "execute"
+            return AgentTool(
+                name,
+                name,
+                {"type": "object"},
+                risk,  # type: ignore[arg-type]
+                execute,
+                lambda _input: PermissionRequest(
+                    name,
+                    risk,  # type: ignore[arg-type]
+                    None if safe else name,
+                ),
+                lambda _input: safe,
+                lambda _input, _output: {"last_tool": name},
+            )
+
+        def final(request, _index, _signal):
+            ids = tuple(
+                message.tool_call_id
+                for message in request.messages
+                if message.role == "tool"
+            )
+            self.assertEqual(ids, ("call-A", "call-B", "call-C", "call-D"))
+            return ModelResponse("response-final", "scheduled")
+
+        model = ScriptedModel(
+            (
+                lambda _request, _index, _signal: ModelResponse(
+                    "response-scheduled",
+                    tool_calls=tuple(call(f"call-{name}", name) for name in "ABCD"),
+                ),
+                final,
+            )
+        )
+        runtime, store, trace = fixture(
+            model,
+            (
+                scheduled("A", True, 0.03),
+                scheduled("B", True, 0.005),
+                scheduled("C", False, 0.005),
+                scheduled("D", True, 0.001),
+            ),
+            gate=PermissionGate(("C",)),
+            max_tool_concurrency=2,
+        )
+
+        result = await runtime.submit("schedule tools", CancellationSignal())
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(peak, 2)
+        self.assertGreater(timeline.index("start:C"), timeline.index("end:A"))
+        self.assertGreater(timeline.index("start:C"), timeline.index("end:B"))
+        self.assertGreater(timeline.index("start:D"), timeline.index("end:C"))
+        self.assertEqual(runtime.tool_context["last_tool"], "D")
+        progress_index = next(
+            index for index, event in enumerate(trace.events)
+            if event.event_type == "tool.progress"
+        )
+        finished_index = next(
+            index for index, event in enumerate(trace.events)
+            if event.event_type == "tool.finished"
+            and event.attributes["tool_use_id"] == "call-B"
+        )
+        self.assertLess(progress_index, finished_index)
         store.assert_request_ready(store.snapshot())
 
     async def test_cancellation_in_tool_pairs_current_and_remaining_calls(self) -> None:

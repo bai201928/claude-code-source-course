@@ -2,7 +2,7 @@
 
 这是随 Claude Code 源码教材累计演进的 clean-room Agent Harness。它不复制 Claude Code 私有实现；当前目标是用一条边界清楚、可运行、可测试的单 Agent 纵切，证明学习者真正理解了消息、状态、请求投影、模型调用、工具反馈、权限、取消和收尾怎样协作。
 
-当前版本：`H2-in-progress / integrated vertical slice 0.2 + M14 bounded stream contract`
+当前版本：`H2 / 0.3.0`（S2 正式里程碑）
 
 ## 现在已经能做什么
 
@@ -17,7 +17,8 @@ flowchart LR
   CAP --> RP
   RP --> MODEL["OpenAI-compatible ModelAdapter"]
   MODEL -->|"final text"| DONE["完成"]
-  MODEL -->|"tool calls"| REG["ToolRegistry"]
+  MODEL -->|"tool calls"| SCHED["ToolScheduler"]
+  SCHED --> REG["ToolRegistry"]
   REG --> PERM["PermissionGate"]
   PERM --> TOOL["read / list / search / command"]
   TOOL --> RESULT["paired tool result"]
@@ -39,9 +40,11 @@ flowchart LR
 - OpenAI-compatible Chat Completions 适配器，可连接 DeepSeek 兼容端点；
 - `read_file`、`list_files`、`search_text` 与默认拒绝的 `run_command`；
 - capability 可见、permission 允许、handler 注册三层独立校验；
+- schema 校验后的 concurrency-safe 分类、连续安全批次、独占屏障和默认 4 个 worker 的固定上限；
+- 工具可以并发完成，但 outcome、context update 与 durable tool result 始终按 assistant call 原顺序提交；
 - 工具失败/拒绝反馈、取消后补齐配对、单会话 single-flight 和最大轮次；
 - 不记录 prompt、tool payload、HTTP body 或 credential 的结构化 Trace；
-- TypeScript 主实现、Python 核心行为镜像，以及 H0/H1/H2 累计回归。
+- TypeScript 主实现、Python 核心行为镜像，以及 H0/H1/H2 累计回归；
 - M14 已加入 provider-neutral 的 `BoundedAgentRunStream`：固定容量、单消费者、terminal metadata、consumer close 到 owner abort/cleanup 的契约；现有 `complete()` 适配器保持兼容。
 
 详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，行为不变量见 [contracts/h2-contract.md](contracts/h2-contract.md)。
@@ -123,12 +126,13 @@ npm run agent -- --grant-executable rg --grant-executable node
 | Request projection | history start、ephemeral context、bounded preview、strict pairing、durable source/Trace 隔离 |
 | Provider protocol | Chat Completions 请求投影、tool call JSON、usage、脱敏 HTTP 错误、URL 约束 |
 | Built-in tools | workspace 越界、`rg` 搜索、默认拒绝命令、secret 不进入子进程 |
-| Python mirror | 与 TypeScript 一致的 loop、pairing、permission、cancel 行为 |
+| Tool scheduler | safe batch、exclusive barrier、并发上限、顺序提交、progress 与 exactly-once outcome |
+| Python mirror | 与 TypeScript 一致的 loop、pairing、permission、cancel、stream 和 scheduler 行为 |
 | 累计回归 | H2 -> H1 -> H0 与所有历史行为契约 |
 
 真实 API 冒烟与确定性测试分开。模型可达不证明 Tool Loop 正确，fake provider 测试通过也不伪装成真实网络验证。
 
-当前验证基线（2026-07-30）：`npm test` 的既有 Agent/Provider/Tool 测试与新增 bounded stream 测试全部通过，本地锁定编译器 strict typecheck 通过；Python Agent 与新增 stream mirror 测试全部通过；`npm run test:all` 的累计回归保持通过。M13 独立投影实验为 TypeScript `9/9`、Python `8/8`；M14 独立 streaming assembler 实验为 TypeScript `4/4`、Python `4/4`，Harness stream contract 为 TypeScript `4/4`、Python `4/4`。
+当前验证基线（2026-07-30）：`npm test` 共 `47/47`（Config `1/1`、Runtime `25/25`、Provider `7/7`、Tool `5/5`、Scheduler `5/5`、Stream `4/4`），本地锁定编译器 strict typecheck 通过；统一 Python Agent/Scheduler/Stream 回归 `22/22`，ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成回归 `4/4` 全部通过。M15 独立调度实验为 TypeScript `6/6`、Python `6/6`。
 
 ## 为什么适合简历和面试讲解
 
@@ -143,8 +147,8 @@ npm run agent -- --grant-executable rg --grant-executable node
 
 一条准确的简历描述可以是：
 
-> 设计并实现 TypeScript/Python 单 Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、请求/能力快照、Permission-aware Tool Loop、取消与配对恢复、工作区受限工具及脱敏 Trace，并用确定性协议测试和真实 Provider 冒烟分层验证。
+> 设计并实现 TypeScript/Python 单 Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、请求/能力快照、带安全批次与独占屏障的并发 Tool Loop、顺序提交、取消与配对恢复、工作区受限工具及脱敏 Trace，并用确定性协议测试和真实 Provider 冒烟分层验证。
 
 ## 当前边界
 
-本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 消费、工具并发、streaming tool execution、透明 model fallback、完整 Context 压缩、aggregate tool-result budget、外置结果恢复、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox、分布式执行和完整 OTel/cost ledger。M14 只合入有界流、assembler/usage 的独立行为契约；后续单元通过真实实验后再决定 merge、defer 或 reject。
+本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 增量消费、streaming tool execution、透明 model fallback、完整 Context 压缩、aggregate tool-result budget、外置结果恢复、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox、分布式执行和完整 OTel/cost ledger。当前并发调度发生在完整 `ModelResponse` 到达后；统一 Harness executor 是 clean-room 设计迁移，不等同于 Claude Code 快照的两条执行路径。

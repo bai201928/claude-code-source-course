@@ -1,6 +1,6 @@
 # TypeScript 与 Node.js 难点索引
 
-状态：`S1 已发布`
+状态：`S2 已发布`
 
 | 难点 | 首次系统讲解 | 源码/机制强化 | 当前掌握边界 | 后续复用 |
 | --- | --- | --- | --- | --- |
@@ -35,5 +35,15 @@
 | `Promise.all` fail-fast 与 all-settled 设计 | M09 | cleanup + LifecycleCoordinator | reject 不取消 peer，错误可转 report | Hook/MCP/Team |
 | `Promise.race`、局部预算与 overall deadline | M09 | cleanup/analytics/failsafe | 停止等待不等于停止底层工作 | API/Task/Cron |
 | `AbortSignal.timeout` 与合作式收尾 | M09 | SessionEnd/H1 cleanup tiers | timeout signal 不等于物理终止确认 | Hook/Subagent |
+| identity、alias 与 deep freeze | M10 | messagesRef、mutableMessages、H2 publication | 数组浅快照只固定成员；发布边界决定是否深冻结 | Context、Transcript |
+| branded/value-object identity | M10 | envelope/response/tool-use/parent IDs | 同为 string 不代表可互换语义 | Task、Trace、幂等 |
+| while 状态机与多出口 union | M12 | `queryLoop()`、Terminal、RunSummary | event、terminal、error、cancel 分通道 | Context、Task、Team |
+| `for await` 与 generator terminal | M12 | QueryEngine early close、手动 `.next()` | 普通消费拿不到 return value | Hook、Subagent、stream API |
+| `using` / async dispose | M12 | Query cleanup boundary | 多出口收敛资源，不等于业务 rollback | MCP、后台任务 |
+| pure projection 与 post-validation | M13 | snapshot -> ModelRequest -> Provider params | source 合法不保证任意 suffix 合法 | Context、权限、持久化 |
+| indexed stream assembly | M14 | content block index、late finalize | 完成顺序、数组顺序与终态时序分开 | MCP stream、Subagent |
+| bounded single-consumer stream | M14 | capacity、close-to-abort、finally cleanup | 本地背压不等于网络端到端背压 | 后台任务、观测 |
+| dynamic predicate 与 worker pool | M15 | parse 后 safety、safe batch、exclusive barrier | 分类异常 fail closed；固定上限避免无界并发 | Hook、MCP、Task |
+| completion order 与 commit order | M15 | call ID outcome map、ordered context/result publication | 并发执行不要求乱序持久化 | Transcript、恢复 |
 
-S0-S1 仍不是 TypeScript 的最终教程。后续机制首次引入尚未覆盖的语言能力时，继续按“最小语义 -> 当前源码作用 -> Java/Python 对照 -> 可运行验证”补齐。
+S0-S2 仍不是 TypeScript 的最终教程。后续机制首次引入尚未覆盖的语言能力时，继续按“最小语义 -> 当前源码作用 -> Java/Python 对照 -> 可运行验证”补齐。

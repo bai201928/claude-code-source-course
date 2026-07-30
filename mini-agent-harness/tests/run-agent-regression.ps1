@@ -25,7 +25,7 @@ function Invoke-AgentCheck {
   }
 }
 
-Invoke-AgentCheck 'H2-in-progress cumulative regression' $projectRoot {
+Invoke-AgentCheck 'H2 cumulative regression' $projectRoot {
   powershell -NoProfile -ExecutionPolicy Bypass -File .\mini-agent-harness\tests\run-h2-regression.ps1
 }
 Invoke-AgentCheck 'Integrated TypeScript agent tests' $harnessRoot {
@@ -35,8 +35,7 @@ Invoke-AgentCheck 'Integrated TypeScript demo' $harnessRoot {
   npm run demo
 }
 Invoke-AgentCheck 'Integrated Python agent tests' "$harnessRoot\python" {
-  python -m unittest -v test_agent_runtime.py
+  python -m unittest -v test_agent_runtime.py test_tool_scheduler.py test_streaming.py
 }
 
 Write-Host "Integrated Agent regression: $passed/4 checks passed (including H2/H1/S0)"
-

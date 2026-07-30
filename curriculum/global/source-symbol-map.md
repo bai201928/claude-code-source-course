@@ -1,6 +1,6 @@
-# S0-S1 源码符号地图
+# S0-S2 源码符号地图
 
-状态：`S1 已发布`
+状态：`S2 已发布`
 
 行号只作当前快照辅助，稳定定位采用“路径 -> 符号 -> 决定性分支”。
 
@@ -43,5 +43,24 @@
 | M09 | `src/screens/REPL.tsx` -> `onCancel` / resume path | turn cancellation 与 logical SessionEnd 是不同边界 |
 | M09 | `src/commands/clear/conversation.ts` / exit flow | clear/resume/process exit 的 reason、AppState 与存活差异 |
 | M09 | `src/utils/sessionStorage.ts` -> `getProject/Project.flush` | Transcript 惰性注册、drain 和 stopping 后 remote suppression |
+| M10 | `src/screens/REPL.tsx` -> `messagesRef` / wrapped `setMessages` | REPL 同步 owner 与 React render projection 分开 |
+| M10 | `src/cli/print.ts` / `src/QueryEngine.ts` -> `mutableMessages` / `submitMessage()` | Headless alias、push、rebind 与 turn shallow view |
+| M10 | `src/utils/messages.ts` -> message creators / `ensureToolResultPairing()` | 多类 identity、human/tool result 分类与 repair/strict pairing |
+| M10 | `src/utils/sessionStorage.ts` -> chain build / parallel result recovery | Transcript parent DAG、legacy progress bridge 与 sibling 恢复 |
+| M11 | `src/screens/REPL.tsx` / `src/cli/print.ts` / `src/QueryEngine.ts` | REPL 与 Headless 两条输入路径在 `query()` 汇合 |
+| M11 | `src/query.ts` -> `query()` / `queryLoop()` | 会话输入成为 Query state，并由 tool result 推进下一模型请求 |
+| M12 | `src/query.ts` -> QueryDeps / while transitions / yielded events | Query owner、模型依赖注入、显式循环与提交顺序 |
+| M12 | `src/QueryEngine.ts` -> `submitMessage()` / event switch | `for await` 消费、early return 与 terminal 不可见边界 |
+| M12 | `src/utils/stream.ts` / Hook generator paths | callback queue、generator close 与过程/终值分层 |
+| M13 | `src/query.ts` -> history boundary / `messagesForQuery` | durable/query 请求视图和 compact boundary |
+| M13 | `src/utils/messages.ts` -> tool result budget / `normalizeMessagesForAPI()` | per-group budget、外置 replacement、过滤/合并/repair |
+| M13 | `src/services/api/claude.ts` -> `queryModel()` / `paramsFromContext()` | API messages 到 system/tools/model/thinking/wire params |
+| M14 | `src/services/api/claude.ts` -> `queryModelWithStreaming()` / `queryModel()` | indexed assembly、assistant-before-terminal、late finalize、fallback 与 cleanup |
+| M14 | `src/services/api/withRetry.ts` -> `withRetry()` | stream 创建前 attempt、retry notice 与 model fallback signal |
+| M14 | `src/query.ts` -> fallback handling | partial attempt 收敛与真正的 model switch owner |
+| M15 | `src/query.ts` -> `needsFollowUp` / streaming gate / next state | tool-use 驱动继续、两条执行入口、results 后 attachments |
+| M15 | `src/services/tools/StreamingToolExecutor.ts` -> `addTool()` / `processQueue()` / `discard()` | parse 后安全分类、safe/unsafe 屏障、child abort 与非 rollback discard |
+| M15 | `src/services/tools/toolOrchestration.ts` -> `partitionToolCalls()` / `runTools()` | response-complete safe batch、并发上限与 ordered modifiers |
+| M15 | `src/services/tools/toolExecution.ts` -> `runToolUse()` | schema、Hook、Permission、call、alias fallback 与 paired error result |
 
 已知快照边界：`src/types/message.ts`、`src/types/utils.ts`、`src/types/tools.ts` 与 `src/query/transitions.ts` 缺失，不能声称原项目完整 typecheck，也不能从 import 名称补造完整类型声明。

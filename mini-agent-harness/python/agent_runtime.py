@@ -234,6 +234,14 @@ class PermissionGate:
 @dataclass(frozen=True)
 class ToolContext:
     signal: CancellationSignal
+    report_progress: Callable[[ToolProgress], object | Awaitable[object]] | None = None
+
+
+@dataclass(frozen=True)
+class ToolProgress:
+    stage: str
+    completed: int | None = None
+    total: int | None = None
 
 
 ToolHandler: TypeAlias = Callable[
@@ -241,6 +249,10 @@ ToolHandler: TypeAlias = Callable[
 ]
 PermissionRequestFactory: TypeAlias = Callable[
     [Mapping[str, object]], PermissionRequest
+]
+ConcurrencyClassifier: TypeAlias = Callable[[Mapping[str, object]], bool]
+ContextUpdateFactory: TypeAlias = Callable[
+    [Mapping[str, object], object], Mapping[str, object] | None
 ]
 
 
@@ -252,12 +264,15 @@ class AgentTool:
     risk: ToolRisk
     execute: ToolHandler
     permission_request: PermissionRequestFactory
+    is_concurrency_safe: ConcurrencyClassifier | None = None
+    context_update: ContextUpdateFactory | None = None
 
 
 @dataclass(frozen=True)
 class ToolDispatchResult:
     decision: PermissionDecision
     output: object
+    context_update: Mapping[str, object] | None = None
 
 
 class ToolRegistry:
@@ -283,6 +298,22 @@ class ToolRegistry:
             for tool in (self._tools[name] for name in self.names())
         )
 
+    def is_concurrency_safe(
+        self, name: str, tool_input: Mapping[str, object]
+    ) -> bool:
+        tool = self._tools.get(name)
+        if tool is None:
+            return False
+        try:
+            frozen_input = _freeze_mapping(tool_input)
+            _validate_tool_input(frozen_input, tool.input_schema)
+            return bool(
+                tool.is_concurrency_safe is not None
+                and tool.is_concurrency_safe(frozen_input)
+            )
+        except Exception:
+            return False
+
     async def dispatch(
         self,
         name: str,
@@ -293,7 +324,9 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             raise ToolExecutionError(f"tool has no executable handler: {name}")
-        request = tool.permission_request(_freeze_mapping(tool_input))
+        frozen_input = _freeze_mapping(tool_input)
+        _validate_tool_input(frozen_input, tool.input_schema)
+        request = tool.permission_request(frozen_input)
         decision = await _resolve_permission_decision(
             gate.decide(request, context.signal),
             context.signal,
@@ -301,10 +334,187 @@ class ToolRegistry:
         if not decision.allowed:
             raise PermissionDeniedError(decision)
         context.signal.throw_if_cancelled()
-        produced = tool.execute(_freeze_mapping(tool_input), context)
+        produced = tool.execute(frozen_input, context)
         output = await produced if inspect.isawaitable(produced) else produced
         context.signal.throw_if_cancelled()
-        return ToolDispatchResult(decision, output)
+        context_update = (
+            tool.context_update(frozen_input, output)
+            if tool.context_update is not None
+            else None
+        )
+        return ToolDispatchResult(
+            decision,
+            output,
+            _freeze_mapping(context_update) if context_update is not None else None,
+        )
+
+
+@dataclass(frozen=True)
+class ToolExecutionBatch:
+    mode: Literal["concurrent", "exclusive"]
+    calls: tuple[ModelToolCall, ...]
+
+
+@dataclass(frozen=True)
+class ToolExecutionPlan:
+    max_concurrency: int
+    batches: tuple[ToolExecutionBatch, ...]
+
+
+@dataclass(frozen=True)
+class ToolExecutionOutcome:
+    call: ModelToolCall
+    status: Literal["success", "error", "denied", "cancelled"]
+    output: str
+    is_error: bool
+    reason: str
+    context_update: Mapping[str, object] | None = None
+
+
+class ToolScheduler:
+    def __init__(self, registry: ToolRegistry, max_concurrency: int = 4) -> None:
+        if isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int):
+            raise ValueError("max tool concurrency must be an integer from 1 to 32")
+        if max_concurrency < 1 or max_concurrency > 32:
+            raise ValueError("max tool concurrency must be an integer from 1 to 32")
+        self._registry = registry
+        self._max_concurrency = max_concurrency
+
+    def plan(self, calls: Sequence[ModelToolCall]) -> ToolExecutionPlan:
+        batches: list[ToolExecutionBatch] = []
+        safe: list[ModelToolCall] = []
+
+        def flush_safe() -> None:
+            if safe:
+                batches.append(ToolExecutionBatch("concurrent", tuple(safe)))
+                safe.clear()
+
+        for call in calls:
+            if self._registry.is_concurrency_safe(call.name, call.input):
+                safe.append(call)
+            else:
+                flush_safe()
+                batches.append(ToolExecutionBatch("exclusive", (call,)))
+        flush_safe()
+        return ToolExecutionPlan(self._max_concurrency, tuple(batches))
+
+    async def execute(
+        self,
+        plan: ToolExecutionPlan,
+        *,
+        signal: CancellationSignal,
+        gate: PermissionGate,
+        initial_context: Mapping[str, object] | None = None,
+        started: Callable[[ModelToolCall], object | Awaitable[object]] | None = None,
+        progress: Callable[
+            [ModelToolCall, ToolProgress], object | Awaitable[object]
+        ] | None = None,
+    ) -> tuple[tuple[ToolExecutionOutcome, ...], Mapping[str, object]]:
+        outcomes: dict[str, ToolExecutionOutcome] = {}
+        context: dict[str, object] = deepcopy(dict(initial_context or {}))
+
+        for batch in plan.batches:
+            if batch.mode == "exclusive":
+                completed = (
+                    await self._execute_one(
+                        batch.calls[0], signal, gate, started, progress
+                    ),
+                )
+            else:
+                completed = await self._execute_concurrent(
+                    batch.calls,
+                    plan.max_concurrency,
+                    signal,
+                    gate,
+                    started,
+                    progress,
+                )
+            outcomes.update((outcome.call.id, outcome) for outcome in completed)
+            for call in batch.calls:
+                update = outcomes[call.id].context_update
+                if update is not None:
+                    context.update(deepcopy(dict(update)))
+
+        ordered_calls = tuple(call for batch in plan.batches for call in batch.calls)
+        return (
+            tuple(outcomes[call.id] for call in ordered_calls),
+            MappingProxyType(context),
+        )
+
+    async def _execute_concurrent(
+        self,
+        calls: tuple[ModelToolCall, ...],
+        limit: int,
+        signal: CancellationSignal,
+        gate: PermissionGate,
+        started: Callable[[ModelToolCall], object | Awaitable[object]] | None,
+        progress: Callable[[ModelToolCall, ToolProgress], object | Awaitable[object]] | None,
+    ) -> tuple[ToolExecutionOutcome, ...]:
+        outcomes: list[ToolExecutionOutcome | None] = [None] * len(calls)
+        next_index = 0
+        lock = asyncio.Lock()
+
+        async def worker() -> None:
+            nonlocal next_index
+            while True:
+                async with lock:
+                    index = next_index
+                    next_index += 1
+                if index >= len(calls):
+                    return
+                outcomes[index] = await self._execute_one(
+                    calls[index], signal, gate, started, progress
+                )
+
+        await asyncio.gather(
+            *(worker() for _ in range(min(limit, len(calls))))
+        )
+        return tuple(outcome for outcome in outcomes if outcome is not None)
+
+    async def _execute_one(
+        self,
+        call: ModelToolCall,
+        signal: CancellationSignal,
+        gate: PermissionGate,
+        started: Callable[[ModelToolCall], object | Awaitable[object]] | None,
+        progress: Callable[[ModelToolCall, ToolProgress], object | Awaitable[object]] | None,
+    ) -> ToolExecutionOutcome:
+        if signal.cancelled:
+            return _cancelled_tool_outcome(call, "cancelled before execution")
+        await _safe_observer(started, call)
+
+        async def report_progress(item: ToolProgress) -> None:
+            await _safe_observer(progress, call, item)
+
+        try:
+            dispatched = await self._registry.dispatch(
+                call.name,
+                call.input,
+                ToolContext(signal, report_progress),
+                gate,
+            )
+            signal.throw_if_cancelled()
+            return ToolExecutionOutcome(
+                call,
+                "success",
+                _serialize_output(dispatched.output),
+                False,
+                dispatched.decision.reason,
+                dispatched.context_update,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if signal.cancelled or isinstance(error, OperationCancelled):
+                return _cancelled_tool_outcome(call, _safe_error(error))
+            denied = isinstance(error, PermissionDeniedError)
+            return ToolExecutionOutcome(
+                call,
+                "denied" if denied else "error",
+                _safe_error(error),
+                True,
+                error.decision.reason if denied else "tool-execution",
+            )
 
 
 @dataclass(frozen=True)
@@ -410,6 +620,7 @@ class AgentRuntime:
         tools: ToolRegistry,
         permission_gate: PermissionGate,
         max_turns: int = 8,
+        max_tool_concurrency: int = 4,
         conversation: ConversationStore | None = None,
         trace: TraceRecorder | None = None,
         ids: MonotonicIdSource | None = None,
@@ -423,6 +634,8 @@ class AgentRuntime:
         self._tools = tools
         self._permission_gate = permission_gate
         self._max_turns = max_turns
+        self._tool_scheduler = ToolScheduler(tools, max_tool_concurrency)
+        self._tool_context: Mapping[str, object] = MappingProxyType({})
         self._conversation = conversation or ConversationStore()
         self._conversation.bind_runtime(self)
         self._trace = trace or TraceRecorder()
@@ -434,6 +647,10 @@ class AgentRuntime:
     @property
     def trace(self) -> TraceRecorder:
         return self._trace
+
+    @property
+    def tool_context(self) -> Mapping[str, object]:
+        return self._tool_context
 
     def conversation_snapshot(self) -> ConversationSnapshot:
         return self._conversation.snapshot()
@@ -526,16 +743,24 @@ class AgentRuntime:
                 if not response.tool_calls:
                     return self._completed(run_id, turns, usage, response.text)
 
-                expected_revision = self._conversation.revision
-                for index, call in enumerate(response.tool_calls):
-                    if signal.cancelled:
-                        self._append_cancelled_results(
-                            response.tool_calls[index:],
-                            assistant,
-                            expected_revision,
-                            run_lease,
-                        )
-                        return self._cancelled(run_id, turns, usage, "before-tool")
+                plan = self._tool_scheduler.plan(response.tool_calls)
+                self._trace.record(
+                    run_id,
+                    "tools.planned",
+                    {
+                        "turn": turns,
+                        "batch_count": len(plan.batches),
+                        "concurrent_batch_count": sum(
+                            batch.mode == "concurrent" for batch in plan.batches
+                        ),
+                        "exclusive_batch_count": sum(
+                            batch.mode == "exclusive" for batch in plan.batches
+                        ),
+                        "max_concurrency": plan.max_concurrency,
+                    },
+                )
+
+                async def started(call: ModelToolCall) -> None:
                     self._trace.record(
                         run_id,
                         "tool.started",
@@ -545,76 +770,58 @@ class AgentRuntime:
                             "tool_use_id": call.id,
                         },
                     )
-                    try:
-                        dispatched = await self._tools.dispatch(
-                            call.name,
-                            call.input,
-                            ToolContext(signal),
-                            self._permission_gate,
-                        )
-                        self._append_tool_result(
-                            call.id,
-                            _serialize_output(dispatched.output),
-                            False,
-                            assistant,
-                            expected_revision,
-                            run_lease,
-                        )
-                        expected_revision = self._conversation.revision
+
+                async def progress(call: ModelToolCall, item: ToolProgress) -> None:
+                    attributes: dict[str, Scalar] = {
+                        "tool_name": call.name,
+                        "tool_use_id": call.id,
+                        "stage": item.stage,
+                    }
+                    if item.completed is not None:
+                        attributes["completed"] = item.completed
+                    if item.total is not None:
+                        attributes["total"] = item.total
+                    self._trace.record(run_id, "tool.progress", attributes)
+
+                try:
+                    outcomes, next_tool_context = await self._tool_scheduler.execute(
+                        plan,
+                        signal=signal,
+                        gate=self._permission_gate,
+                        initial_context=self._tool_context,
+                        started=started,
+                        progress=progress,
+                    )
+                except asyncio.CancelledError:
+                    self._append_cancelled_results(
+                        response.tool_calls,
+                        assistant,
+                        self._conversation.revision,
+                        run_lease,
+                    )
+                    for call in response.tool_calls:
                         self._tool_finished(
-                            run_id, call, "success", "policy-allowed"
+                            run_id, call, "cancelled", "task-cancelled"
                         )
-                    except asyncio.CancelledError:
-                        self._append_tool_result(
-                            call.id,
-                            "cancelled during execution",
-                            True,
-                            assistant,
-                            expected_revision,
-                            run_lease,
-                        )
-                        expected_revision = self._conversation.revision
-                        self._tool_finished(run_id, call, "cancelled", "task-cancelled")
-                        self._append_cancelled_results(
-                            response.tool_calls[index + 1 :],
-                            assistant,
-                            expected_revision,
-                            run_lease,
-                        )
-                        return self._cancelled(run_id, turns, usage, "tool-task")
-                    except Exception as error:
-                        cancelled = signal.cancelled or isinstance(
-                            error, OperationCancelled
-                        )
-                        denied = isinstance(error, PermissionDeniedError)
-                        self._append_tool_result(
-                            call.id,
-                            _safe_error(error),
-                            True,
-                            assistant,
-                            expected_revision,
-                            run_lease,
-                        )
-                        expected_revision = self._conversation.revision
-                        status = (
-                            "cancelled" if cancelled else "denied" if denied else "error"
-                        )
-                        category = (
-                            "cancellation"
-                            if cancelled
-                            else "permission"
-                            if denied
-                            else "tool-execution"
-                        )
-                        self._tool_finished(run_id, call, status, category)
-                        if cancelled:
-                            self._append_cancelled_results(
-                                response.tool_calls[index + 1 :],
-                                assistant,
-                                expected_revision,
-                                run_lease,
-                            )
-                            return self._cancelled(run_id, turns, usage, "tool")
+                    return self._cancelled(run_id, turns, usage, "tool-task")
+
+                expected_revision = self._conversation.revision
+                for outcome in outcomes:
+                    self._append_tool_result(
+                        outcome.call.id,
+                        outcome.output,
+                        outcome.is_error,
+                        assistant,
+                        expected_revision,
+                        run_lease,
+                    )
+                    expected_revision = self._conversation.revision
+                    self._tool_finished(
+                        run_id, outcome.call, outcome.status, outcome.reason
+                    )
+                self._tool_context = next_tool_context
+                if signal.cancelled:
+                    return self._cancelled(run_id, turns, usage, "tool")
 
             self._trace.record(
                 run_id, "run.max-turns", {"max_turns": self._max_turns}
@@ -947,6 +1154,96 @@ def _copy_response(response: ModelResponse) -> ModelResponse:
         for call in response.tool_calls
     )
     return ModelResponse(response.response_id, response.text, calls, response.usage)
+
+
+async def _safe_observer(
+    callback: Callable[..., object | Awaitable[object]] | None,
+    *args: object,
+) -> None:
+    if callback is None:
+        return
+    try:
+        produced = callback(*args)
+        if inspect.isawaitable(produced):
+            await produced
+    except Exception:
+        # Observer callbacks never own execution or pairing.
+        return
+
+
+def _cancelled_tool_outcome(
+    call: ModelToolCall, output: str
+) -> ToolExecutionOutcome:
+    return ToolExecutionOutcome(
+        call,
+        "cancelled",
+        output or "operation cancelled",
+        True,
+        "cancellation",
+    )
+
+
+def _validate_tool_input(
+    tool_input: Mapping[str, object], schema: Mapping[str, object]
+) -> None:
+    if schema.get("type") not in (None, "object"):
+        raise ToolExecutionError("tool input schema must describe an object")
+    raw_properties = schema.get("properties", {})
+    properties = raw_properties if isinstance(raw_properties, Mapping) else {}
+    raw_required = schema.get("required", ())
+    required = (
+        tuple(name for name in raw_required if isinstance(name, str))
+        if isinstance(raw_required, Sequence) and not isinstance(raw_required, str)
+        else ()
+    )
+    for name in required:
+        if name not in tool_input:
+            raise ToolExecutionError(f"{name} is required")
+    if schema.get("additionalProperties") is False:
+        for name in tool_input:
+            if name not in properties:
+                raise ToolExecutionError(f"{name} is not allowed")
+    for name, value in tool_input.items():
+        property_schema = properties.get(name)
+        if isinstance(property_schema, Mapping):
+            _validate_schema_value(value, property_schema, name)
+
+
+def _validate_schema_value(
+    value: object, schema: Mapping[str, object], name: str
+) -> None:
+    expected = schema.get("type")
+    valid = True
+    if expected == "string":
+        valid = isinstance(value, str)
+    elif expected == "integer":
+        valid = isinstance(value, int) and not isinstance(value, bool)
+    elif expected == "number":
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+    elif expected == "boolean":
+        valid = isinstance(value, bool)
+    elif expected == "array":
+        valid = isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+    elif expected == "object":
+        valid = isinstance(value, Mapping)
+    if not valid:
+        raise ToolExecutionError(f"{name} must be a {expected}")
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if isinstance(minimum, (int, float)) and value < minimum:
+            raise ToolExecutionError(f"{name} must be at least {minimum}")
+        if isinstance(maximum, (int, float)) and value > maximum:
+            raise ToolExecutionError(f"{name} must be at most {maximum}")
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and len(value) > max_items:
+            raise ToolExecutionError(f"{name} has too many entries")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, Mapping):
+            for index, item in enumerate(value):
+                _validate_schema_value(item, item_schema, f"{name}[{index}]")
 
 
 async def _resolve_permission_decision(

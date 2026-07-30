@@ -176,6 +176,77 @@ test('turns an unserializable tool output into a paired error result', async () 
   fixture.store.assertRequestReady(fixture.store.snapshot())
 })
 
+test('executes safe batches concurrently, preserves barriers and commits results by call order', async () => {
+  const timeline: string[] = []
+  const events: AgentEvent[] = []
+  let active = 0
+  let peak = 0
+  const scheduledTool = (name: string, safe: boolean, delay: number): AgentTool => ({
+    ...tool(name, safe ? 'read' : 'execute', async (_input, context) => {
+      timeline.push(`start:${name}`)
+      active++
+      peak = Math.max(peak, active)
+      if (name === 'B') await context.reportProgress?.({ stage: 'half', completed: 1, total: 2 })
+      await new Promise(resolve => setTimeout(resolve, delay))
+      active--
+      timeline.push(`end:${name}`)
+      return name
+    }, () => ({
+      toolName: name,
+      risk: safe ? 'read' : 'execute',
+      ...(safe ? {} : { command: name }),
+    })),
+    isConcurrencySafe: () => safe,
+    contextUpdate: () => ({ lastTool: name }),
+  })
+  const model = new ScriptedModelAdapter([
+    () => ({
+      responseId: 'response-scheduled',
+      toolCalls: ['A', 'B', 'C', 'D'].map(name => ({ id: `call-${name}`, name, input: {} })),
+    }),
+    request => {
+      assert.deepEqual(
+        request.messages.filter(message => message.role === 'tool').map(message => message.toolCallId),
+        ['call-A', 'call-B', 'call-C', 'call-D'],
+      )
+      return { responseId: 'response-final', text: 'scheduled', toolCalls: [] }
+    },
+  ])
+  const fixture = createFixture(
+    model,
+    [
+      scheduledTool('A', true, 30),
+      scheduledTool('B', true, 5),
+      scheduledTool('C', false, 5),
+      scheduledTool('D', true, 1),
+    ],
+    new PolicyPermissionGate(['C']),
+    4,
+    {
+      maxToolConcurrency: 2,
+      events: { emit(event) { events.push(event) } },
+    },
+  )
+
+  const result = await fixture.runtime.submit('schedule tools', new AbortController().signal)
+
+  assert.equal(result.status, 'completed')
+  assert.equal(peak, 2)
+  assert.ok(timeline.indexOf('start:C') > timeline.indexOf('end:A'))
+  assert.ok(timeline.indexOf('start:C') > timeline.indexOf('end:B'))
+  assert.ok(timeline.indexOf('start:D') > timeline.indexOf('end:C'))
+  assert.equal(fixture.sessionState.getState().values.toolExecutionContext instanceof Object, true)
+  assert.equal(
+    (fixture.sessionState.getState().values.toolExecutionContext as Record<string, unknown>).lastTool,
+    'D',
+  )
+  const progressIndex = events.findIndex(event => event.type === 'tool.progress')
+  const finishedIndex = events.findIndex(event =>
+    event.type === 'tool.finished' && event.toolUseId === 'call-B')
+  assert.ok(progressIndex >= 0 && progressIndex < finishedIndex)
+  fixture.store.assertRequestReady(fixture.store.snapshot())
+})
+
 test('pairs the current and remaining tool calls when cancellation arrives in a tool', async () => {
   const controller = new AbortController()
   const cancelling = tool('cancel', 'read', async () => {
@@ -308,13 +379,19 @@ test('isolates event sink failures at every protocol phase', async t => {
     'run.started',
     'assistant.text',
     'tool.started',
+    'tool.progress',
     'tool.finished',
     'run.finished',
   ]
 
   for (const eventType of eventTypes) {
     await t.test(eventType, async () => {
-      const echo = tool('echo', 'read', async () => 'ok')
+      const echo = tool('echo', 'read', async (_input, context) => {
+        if (eventType === 'tool.progress') {
+          await context.reportProgress?.({ stage: 'testing' })
+        }
+        return 'ok'
+      })
       const model = new ScriptedModelAdapter([
         () => ({
           responseId: 'response-tool',
@@ -663,6 +740,7 @@ function createFixture(
     sessionState?: SessionStateStore
     conversation?: ConversationStore
     requestProjectionPolicy?: RequestProjectionPolicy
+    maxToolConcurrency?: number
   }> = {},
 ): {
   runtime: AgentRuntime
@@ -697,6 +775,7 @@ function createFixture(
     workspace: process.cwd(),
     mode: 'headless',
     maxTurns,
+    maxToolConcurrency: options.maxToolConcurrency,
     conversation: store,
     trace: new TraceRecorder([trace], () => new Date('2026-01-01T00:00:00Z')),
     events: options.events,

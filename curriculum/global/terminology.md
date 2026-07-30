@@ -1,6 +1,6 @@
 # 全局术语表
 
-状态：`S1 已发布`
+状态：`S2 已发布`
 
 本表只保存后续单元需要复用的稳定术语。具体教学解释仍以来源单元为准。
 
@@ -45,3 +45,21 @@
 | process graceful shutdown | first owner 在有限预算内组织进程级收尾并最终退出 | hard termination、所有 cleanup 必然成功 | M09 |
 | abrupt termination | SIGKILL/直接 bypass 等没有 JavaScript 收尾保证的终止 | graceful shutdown、cancel request | M09 |
 | LifecycleCoordinator | H1 中拥有 lifecycle state、分层 cleanup 与共享 report 的进程无关核心 | Claude Code 当前 Set registry、OS signal/最终 process exit owner | M09/H1 |
+| durable conversation | 跨模型迭代保留的消息事实与 tool pairing 状态 | 某一轮 Query state、请求视图、Provider payload | M10-M13 |
+| ConversationStore | H2 中 durable conversation membership、revision 与 pairing 的唯一 owner | REPL React state、Provider adapter、Transcript 数据库 | M10/H2 |
+| envelope ID | 本地消息节点身份 | Provider response ID、tool-use ID、Transcript parent | M10 |
+| provider response ID | 同一次模型响应及其流式片段的分组身份 | 本地 envelope 唯一键 | M10/M14 |
+| tool-use ID | assistant 调用与 user-role tool result 的协议配对键 | 数组位置、执行完成顺序、trace ID | M10/M15 |
+| progress event | 可提前观察、可丢且不推进 conversation revision 的过程事件 | durable message、final tool result | M10/M15 |
+| Query state | `queryLoop()` 当前运行的控制状态与下一轮输入 | 入口长期消息 owner、Provider request | M11-M12 |
+| terminal value | generator 正常完成时通过 `return` 产生的终值 | 最后一个 yielded event、`for await` 可直接取得的值 | M12 |
+| run channel | durable state、observer events 与 terminal summary 中的一条独立协议 | 一个共享 event 数组 | M12/H2 |
+| RequestProjector | 从 immutable conversation snapshot 派生本轮模型可见请求的纯边界 | durable store mutation、Provider HTTP adapter | M13/H2 |
+| history start | 只选择当前请求可见历史起点的 policy | 删除或截断 durable history | M13 |
+| request-only context | 只注入当前 ModelRequest 的临时上下文 | 持久化 user message、系统长期记忆 | M13 |
+| protocol assembler | 按 index 把 Provider stream event 组装为完整业务 block，并在 finalize 边界补终态 | Tool Loop、ConversationStore owner | M14 |
+| consumer close | 下游放弃继续消费并触发 iterator/source cleanup | 业务 completed、所有外部副作用已回滚 | M12/M14 |
+| ToolExecutionPlan | H2 对一个 assistant tool-call block 的 immutable 批次计划 | 工具执行结果、Permission 决策 | M15/H2 |
+| concurrency-safe | 某个工具在当前已验证输入下允许与相邻安全调用并发 | 工具名永久无副作用、Permission allow、Sandbox | M15 |
+| exclusive barrier | 必须等待前批完成并阻止后批越过的单工具批次 | 全局锁、所有工具永远串行 | M15/H2 |
+| ordered publication | 执行可乱序完成，但 outcome、context update 与 durable result 按原 tool-call 顺序提交 | 强制工具串行执行 | M15/H2 |

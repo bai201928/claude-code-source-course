@@ -1,8 +1,8 @@
-# H2 行为契约（进行中）
+# H2 行为契约
 
-版本：`H2-in-progress`
+版本：`H2 / Harness 0.3.0`
 
-当前来源单元：M10、M11、M12、M13、M14，以及用户批准的 S0/S1 核心纵切升级。S2 尚未完成；本文件冻结已经验证并合入累计 Harness 的消息所有权、请求投影、Provider 边界、单 Agent Tool Loop、运行通道分层和有界单消费者流契约。Provider-specific SSE 组装、Runtime 消费、完整 Context Pipeline 与并发 Tool 调度仍由后续单元演进。
+来源单元：M10-M15，以及用户批准的 S0/S1 核心纵切升级。S2 已完成；本文件冻结消息所有权、请求投影、Provider 边界、运行通道、有界单消费者流，以及带安全分类和独占屏障的并发 Tool Loop。Provider-specific SSE 组装、Runtime 的流式 assistant/tool 消费与完整 Context Pipeline 仍由后续单元演进。
 
 ## M10 消息与会话不变量
 
@@ -54,12 +54,23 @@
 79. `RequestProjector` 在 capability snapshot 之外仍拒绝未知 tool schema；message projection、capability projection 和 local handler/permission 是三个独立边界，不能因请求消息合法而跳过能力与执行校验。
 80. TypeScript 与 Python 必须同时证明：Provider 看到 request-only context 和 bounded preview，Store 仍持有完整 output，Trace 不含两侧正文；任何一个边界失败都不能宣称 M13 合入完成。
 
+## M14-M15 流与 Tool 调度不变量
+
+81. `BoundedAgentRunStream` 固定容量且只允许一个消费者；buffer 满时暂停下一次上游 pull。消费者主动关闭必须触发 owner abort，并等待 source 的 `finally` 收敛后才完成 cleanup。terminal state 只保存状态和错误类别等元数据。
+82. 当前 `AgentRuntime` 仍在完整 `ModelResponse` 返回后规划工具；provider-neutral stream 尚未接入 Runtime 的 assistant/tool 增量消费。存在有界流契约不等于已经实现 Provider-specific SSE 或 streaming tool execution。
+83. `ToolScheduler` 先生成显式 `ToolExecutionPlan`：连续 concurrency-safe 调用形成 `concurrent` batch，未声明安全或动态分类失败的调用形成单调用 `exclusive` barrier。默认并发上限为 4，可配置范围为 1-32。
+84. 工具输入必须先通过 schema 校验，才允许执行动态 concurrency-safe 分类；分类器异常或工具未声明安全时 fail closed 为 exclusive。模型可见、Permission 允许、handler 存在和 concurrency-safe 是四个不同判断。
+85. concurrent batch 使用固定 worker pool，不能无界 `Promise.all` 启动全部工作；exclusive 调用必须等待前一批完成，并阻止后一批越过。执行完成顺序可以变化，但 outcomes、durable tool results 和 context update 必须按原 assistant tool-call 顺序提交。
+86. progress 可在最终 outcome 前通过 observer/trace 可见，但 observer 失败不拥有执行。每个 call ID 无论 success、error、denied 或 cancelled 都恰好产生一个 outcome，随后形成一个配对 tool result。
+87. 取消阻止尚未启动或刚通过 Permission 的副作用；已并发启动的 handler 通过共享 signal 合作收敛。取消不允许丢失任何 call ID 的 outcome，也不能让晚到成功覆盖 cancelled 语义。
+88. 本 Harness 的统一 response-complete scheduler 是 clean-room 设计迁移。它不声称等同于 Claude Code 快照中 response-complete 与 streaming 两条执行路径，也不继承后者特有的 sibling cascade、per-tool interrupt behavior 或 streaming context-modifier 边界。
+
 H0 与 H1 的全部不变量继续有效，分别见 `h0-contract.md` 和 `h1-contract.md`。
 
 ## 当前明确不承诺
 
-- 已包含非流式 OpenAI-compatible 真实模型请求和顺序 Tool Loop，但不包含 SSE 流式 assistant 聚合或并行工具调度；
-- 不提供 pull-based `AgentRunStream`，也不声称 observer await 等同于网络端到端背压；
+- 已包含非流式 OpenAI-compatible 真实模型请求和有界并发 Tool Loop，但不包含 SSE 流式 assistant 聚合或 streaming tool execution；
+- 已提供独立的 pull-based `AgentRunStream`，但不声称 observer await 或该本地 buffer 等同于网络端到端背压；
 - 不实现 Claude Code 的非严格 tool pairing 修复；Harness 当前选择 fail closed；
 - 不实现 aggregate API-user-group budget、跨轮 replacement state、外置 tool-result storage、resume replacement record 或 Prompt Cache edit；
 - 不实现 Transcript DAG、fork、compact 或跨进程恢复；

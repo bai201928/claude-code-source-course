@@ -22,17 +22,14 @@ import {
   type SessionStateStore,
 } from '../runtimeContext.ts'
 import type { ModelAdapter, ModelResponse, ModelUsage } from './model.ts'
-import { PermissionDeniedError, type PermissionGate } from './permissions.ts'
+import type { PermissionGate } from './permissions.ts'
 import {
   RequestProjector,
   type RequestProjectionPolicy,
 } from './requestProjector.ts'
 import { TraceRecorder } from './trace.ts'
-import {
-  AgentToolRegistry,
-  ToolExecutionError,
-  type ToolDispatchResult,
-} from './tools.ts'
+import { ToolScheduler } from './toolScheduler.ts'
+import { AgentToolRegistry, type ToolProgress } from './tools.ts'
 
 export type AgentRunStatus = 'completed' | 'cancelled' | 'failed' | 'max-turns'
 
@@ -54,6 +51,13 @@ export type AgentEvent =
   | Readonly<{ type: 'run.started'; runId: string }>
   | Readonly<{ type: 'assistant.text'; runId: string; text: string }>
   | Readonly<{ type: 'tool.started'; runId: string; toolName: string; toolUseId: string }>
+  | Readonly<{
+      type: 'tool.progress'
+      runId: string
+      toolName: string
+      toolUseId: string
+      progress: ToolProgress
+    }>
   | Readonly<{
       type: 'tool.finished'
       runId: string
@@ -89,6 +93,7 @@ export type AgentRuntimeOptions = Readonly<{
   workspace: string
   mode: 'interactive' | 'headless'
   maxTurns?: number
+  maxToolConcurrency?: number
   conversation?: ConversationStore
   capabilityProjector?: CapabilityProjector
   trace: TraceRecorder
@@ -108,6 +113,7 @@ export class AgentRuntime {
   readonly #workspace: string
   readonly #mode: 'interactive' | 'headless'
   readonly #maxTurns: number
+  readonly #toolScheduler: ToolScheduler
   readonly #conversation: ConversationStore
   readonly #capabilityProjector: CapabilityProjector
   readonly #requestProjector: RequestProjector
@@ -131,6 +137,7 @@ export class AgentRuntime {
     this.#workspace = options.workspace
     this.#mode = options.mode
     this.#maxTurns = maxTurns
+    this.#toolScheduler = new ToolScheduler(options.tools, options.maxToolConcurrency ?? 4)
     this.#conversation = options.conversation ?? new ConversationStore()
     this.#capabilityProjector = options.capabilityProjector ?? new CapabilityProjector()
     this.#requestProjector = new RequestProjector(this.#conversation)
@@ -265,82 +272,80 @@ export class AgentRuntime {
           return await this.#completed(runId, turns, usage, response.text)
         }
 
-        let expectedRevision = this.#conversation.revision
-        for (let index = 0; index < response.toolCalls.length; index++) {
-          const call = response.toolCalls[index]!
-          if (signal.aborted) {
-            this.#appendCancelledResults(
-              response.toolCalls.slice(index),
-              assistant,
-              expectedRevision,
-              runLease,
-            )
-            return await this.#cancelled(runId, turns, usage, 'before-tool')
-          }
-          await this.#emit(Object.freeze({
-            type: 'tool.started',
-            runId,
-            toolName: call.name,
-            toolUseId: call.id,
-          }))
-          await this.#trace.record(runId, 'tool.started', {
-            toolName: call.name,
-            toolUseId: call.id,
-            turn: turns,
-          })
+        const plan = this.#toolScheduler.plan(response.toolCalls, visibleNames)
+        await this.#trace.record(runId, 'tools.planned', {
+          turn: turns,
+          batchCount: plan.batches.length,
+          concurrentBatchCount: plan.batches.filter(batch => batch.mode === 'concurrent').length,
+          exclusiveBatchCount: plan.batches.filter(batch => batch.mode === 'exclusive').length,
+          maxConcurrency: plan.maxConcurrency,
+        })
+        const initialToolContext = asRecord(
+          this.#sessionState.getState().values.toolExecutionContext,
+        )
+        const execution = await this.#toolScheduler.execute(plan, {
+          workspace: this.#workspace,
+          signal,
+          gate: this.#permissionGate,
+          visibleNames,
+          initialContext: initialToolContext,
+          hooks: {
+            started: async call => {
+              await this.#emit(Object.freeze({
+                type: 'tool.started',
+                runId,
+                toolName: call.name,
+                toolUseId: call.id,
+              }))
+              await this.#trace.record(runId, 'tool.started', {
+                toolName: call.name,
+                toolUseId: call.id,
+                turn: turns,
+              })
+            },
+            progress: async (call, progress) => {
+              await this.#trace.record(runId, 'tool.progress', {
+                toolName: call.name,
+                toolUseId: call.id,
+                stage: progress.stage,
+                ...(progress.completed === undefined ? {} : { completed: progress.completed }),
+                ...(progress.total === undefined ? {} : { total: progress.total }),
+              })
+              await this.#emit(Object.freeze({
+                type: 'tool.progress',
+                runId,
+                toolName: call.name,
+                toolUseId: call.id,
+                progress,
+              }))
+            },
+          },
+        })
 
-          let result: ToolDispatchResult
-          let serializedOutput: string
-          try {
-            result = await this.#tools.dispatch(
-              call.name,
-              call.input,
-              { workspace: this.#workspace, signal },
-              this.#permissionGate,
-              visibleNames,
-            )
-            if (signal.aborted) throw signal.reason ?? new Error('tool cancelled')
-            serializedOutput = serializeOutput(result.output)
-          } catch (error) {
-            const cancelled = signal.aborted
-            const denied = error instanceof PermissionDeniedError
-            this.#appendToolError(
-              call.id,
-              safeError(error),
-              assistant,
-              expectedRevision,
-              runLease,
-            )
-            expectedRevision = this.#conversation.revision
-            await this.#toolFinished(
-              runId,
-              call.name,
-              call.id,
-              cancelled ? 'cancelled' : denied ? 'denied' : 'error',
-              denied ? error.decision.reason : safeErrorCategory(error),
-            )
-            if (cancelled) {
-              this.#appendCancelledResults(
-                response.toolCalls.slice(index + 1),
-                assistant,
-                expectedRevision,
-                runLease,
-              )
-              return await this.#cancelled(runId, turns, usage, 'tool')
-            }
-            continue
-          }
+        let expectedRevision = this.#conversation.revision
+        for (const outcome of execution.outcomes) {
           this.#appendToolResult(
-            call.id,
-            serializedOutput,
-            false,
+            outcome.call.id,
+            outcome.output,
+            outcome.isError,
             assistant,
             expectedRevision,
             runLease,
           )
           expectedRevision = this.#conversation.revision
-          await this.#toolFinished(runId, call.name, call.id, 'success', result.decision.reason)
+          await this.#toolFinished(
+            runId,
+            outcome.call.name,
+            outcome.call.id,
+            outcome.status,
+            outcome.reason,
+          )
         }
+        this.#sessionState.publish({
+          ...this.#sessionState.getState().values,
+          toolExecutionContext: execution.context,
+        })
+        if (signal.aborted) return await this.#cancelled(runId, turns, usage, 'tool')
       }
 
       await this.#trace.record(runId, 'run.max-turns', { maxTurns: this.#maxTurns })
@@ -398,43 +403,6 @@ export class AgentRuntime {
       expectedRevision,
       runLease,
     )
-  }
-
-  #appendToolError(
-    rawToolUseId: string,
-    error: string,
-    assistant: AssistantMessage,
-    expectedRevision: number,
-    runLease: ConversationRunLease,
-  ): void {
-    this.#appendToolResultMessage(
-      rawToolUseId,
-      error,
-      true,
-      assistant,
-      expectedRevision,
-      runLease,
-    )
-  }
-
-  #appendCancelledResults(
-    calls: readonly { id: string }[],
-    assistant: AssistantMessage,
-    expectedRevision: number,
-    runLease: ConversationRunLease,
-  ): void {
-    let nextRevision = expectedRevision
-    for (const call of calls) {
-      this.#appendToolResultMessage(
-        call.id,
-        'cancelled before execution',
-        true,
-        assistant,
-        nextRevision,
-        runLease,
-      )
-      nextRevision = this.#conversation.revision
-    }
   }
 
   #appendToolResultMessage(
@@ -558,23 +526,13 @@ function addUsage(target: MutableUsage, usage: ModelUsage | undefined): void {
     (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
 }
 
-function serializeOutput(value: unknown): string {
-  const rendered = typeof value === 'string' ? value : JSON.stringify(value)
-  if (rendered === undefined) return 'null'
-  return rendered.length <= 200_000
-    ? rendered
-    : `${rendered.slice(0, 200_000)}\n[tool output truncated]`
-}
-
 function safeError(error: unknown): string {
-  if (error instanceof PermissionDeniedError) return error.decision.reason
-  if (error instanceof ToolExecutionError) return error.message
   if (error instanceof Error) return error.message
   return String(error)
 }
 
-function safeErrorCategory(error: unknown): string {
-  if (error instanceof PermissionDeniedError) return 'permission'
-  if (error instanceof ToolExecutionError) return 'tool-execution'
-  return 'tool'
+function asRecord(value: unknown): Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : Object.freeze({})
 }

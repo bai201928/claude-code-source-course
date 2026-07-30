@@ -1,807 +1,1661 @@
-# M01 面试官问“TypeScript 类型能保证 Agent 安全吗？”：从 Message、Tool、Task 扒开三道系统边界
+# Claude Code 源码拆解：一个工业级 Agent 为什么不能只靠 `while (true)`
 
-<!-- INTERVIEW_LED_STYLE_V1 -->
+> M01–M04 合并重构版：从零认识 Agent，沿一次真实运行理解契约、事件流、资源生命周期与源码证据。
 
-这题面试官想考的，其实不是你会不会背 `type`、`interface`、泛型和 Zod，而是看你有没有真正想过：一个工业级 Agent 到底靠什么守住消息、工具和任务的边界。
+## 此页内容
 
-你是停在“TypeScript 有类型检查，所以比较安全”这种皮毛上，还是会继续追问：模型吐回来的 JSON 根本没经过 `tsc`，谁来验？两个模块都叫 `TaskStatus`，凭什么不是同一个领域？状态值合法，为什么仍然可能发生非法迁移？
+- 一、Claude Code 到底是什么
+- 二、敲下回车后，Agent 内部发生了什么
+- 三、第一道缰绳：类型、校验与状态迁移
+- 四、第二道缰绳：一次运行不是结果，而是一条事件流
+- 五、第三道缰绳：`await` 之后还有资源生命周期
+- 六、第四道缰绳：不要把代码里的连线当成真实调用
+- 七、把四部分串起来：工业级 Agent Harness 的最小骨架
+- 八、三个最值得亲手做的实验
+- 九、资深 Agent 开发岗高频面试题
+- 写在最后
 
-很可惜，这位林友当时只回答：“TypeScript 能在编译期发现错误，Zod 再校验一下就行。”面试官接着问：“那 `completed -> running` 为什么还能写出来？`src/Task.ts` 和 `src/utils/tasks.ts` 的 `TaskStatus` 能直接互转吗？”他就接不下去了，面试官摇了摇头，让他先回去等通知。
+---
 
-今天这篇文章，我们就不从语法表开始背，而是沿着 Claude Code 的 Message、Tool 和两套 Task 领域，把下面这些问题一层层扒清楚：
+大家好。
 
-- 类型到底能证明什么，又绝对不能证明什么？
-- 模型 tool input 怎样从 `unknown` 进入可信内部对象？
-- Agent 为什么需要判别联合，它怎样直接改变控制流？
-- `Tool<Input, Output, P>` 为什么能把权限、并发、执行和结果锁成同一条契约？
-- 同样是合法的 status，为什么还必须有 transition guard？
-- 关键类型文件缺失时，怎样依靠 producer、consumer 和 validator 重建“最小可证事实”？
+这几年 Agent 开发有一个很明显的变化：大家不再只盯着模型排行榜，而是开始讨论 **Harness Engineering**。
 
-看完这一章，你不只会解释 Claude Code 的类型设计，还应该能在面试里把答案提升到“静态契约、运行校验、状态迁移”三道门。文章依旧硬核到底，发车！
+这个词听起来很新，其实意思很朴素：
 
-### 这篇文章写给谁？
+> 模型像一匹能力很强、但行为不完全稳定的马；Harness 就是缰绳、围栏、刹车和仪表盘。
 
-这四个单元不再把读者假设成“已经熟悉 TypeScript、Node.js 和 Claude Code 的源码老手”。它同时面向三类人：
+模型负责理解和决策，系统负责告诉它：
 
-- **零基础或基础薄弱的 Agent 学习者**：先从一次真实操作和一个可观察问题出发，再解释术语、类型和源码；
-- **正在准备大厂 Agent / Java 后端面试的人**：不仅要知道 Claude Code 怎么写，还要能把它迁移成工业级 Agent Harness 的设计答案；
-- **已经能读代码、但容易停在 happy path 的工程师**：重点追状态 owner、异常路径、取消、恢复、运行时验证和可证伪证据。
+- 哪些数据是真的；
+- 哪些工具可以调用；
+- 哪些操作需要确认；
+- 中途发生了什么；
+- 用户取消后资源是否真的停止；
+- 出错后哪些状态已经写入；
+- 我们凭什么相信画出来的调用链。
 
-### 这篇应该怎么学？
+很多初学者第一次写 Agent，会得到下面这段代码：
 
-不要把正文当成 API 手册从头背到尾。每一节都按同一条主线阅读：
+```ts
+while (true) {
+  const response = await callModel(messages)
 
-```text
-先看用户或面试场景
--> 提出一个能被证伪的问题
--> 找到决定性源码
--> 追数据、状态与资源 owner
--> 补异常路径和边界
--> 用实验推翻错误直觉
--> 最后压成两分钟面试表达
+  if (response.toolCalls.length === 0) {
+    return response.text
+  }
+
+  const results = await runTools(response.toolCalls)
+  messages.push(...results)
+}
 ```
 
-文中的 Claude Code 快照事实、clean-room 运行验证和 Mini Agent Harness 设计迁移仍然严格分开；新的叙事方式只负责把路带得更清楚，不会把推断包装成源码事实。
+这段代码没有错。它甚至可以跑通一个不错的 Demo。
 
-> **原单元主题：** M01 类型不是注释：从 Message、Tool 和 Task 读出 Agent 系统边界
->
-> **内容保留说明：** 下文原有源码事实、代码片段、Mermaid 图、实验结果、破坏练习、H0 迁移、跨语言对照、企业治理、面试答案和源码定位均完整保留；本次修改只重构目标读者、叙事入口、章节标题、过渡方式与总结风格。
+但它没有回答真正困难的问题：
 
-你第一次打开 Claude Code 的源码，最容易做的一件事，是搜索 `query()`、`call()` 或 `run()`，然后一头扎进函数体。几百行之后，你会认识很多变量，却仍然回答不了三个基础问题：这个变量到底可能是哪几种消息？这个工具的输入和输出为什么不会串型？一个任务的 `status` 取值合法，是否就代表这次状态变化合法？
+- 模型返回的工具参数如果是错的，谁负责拦截？
+- 两个工具同时修改一个文件怎么办？
+- 模型正在输出时，工具进度怎样实时显示？
+- 消费者不再读取事件，上游会不会继续往内存里塞？
+- 用户按下 Ctrl+C，AbortSignal 触发是否就代表子进程已经退出？
+- Query 中途失败，前面已经写入的消息会不会自动回滚？
+- 文件 import 了某个函数，能不能证明本次请求真的调用了它？
 
-问题不在于函数看少了，而在于你跳过了函数赖以成立的契约。
+Claude Code 值得学习的地方，不是它有一个 `while (true)`，而是它在这个循环周围修了大量“看起来不聪明，却决定系统能不能长期运行”的基础设施。
 
-在 TypeScript Agent 系统里，类型通常同时承担三项工作：限制内部代码可以构造什么，告诉消费者应该在哪个判别字段分支，以及把同一份输入/输出关系传播到多个组件。但类型也有明确边界：它会在运行前被擦除，不能自动验证磁盘 JSON、模型 tool input 或网络 payload，也不能凭一个字符串联合定义完整状态机。
-
-完成本单元后，你应该能在读函数体前先画出候选领域边界，沿 import path 区分同名类型，用 producer、consumer 和 validator 交叉核验类型含义，并能明确说出一句很重要的话：
-
-> TypeScript 类型描述内部代码在编译时承诺什么；运行时 schema 判断外部数据实际上是什么；状态迁移规则判断一个合法值此刻能不能发生。
-
-主体阅读和源码跟踪预计 5 至 6.5 小时。双语言实验、破坏练习和扩展挑战另计。
-
-## 一、先看一个面试翻车现场：两个 `TaskStatus`，真的是同一个东西吗？
-
-假设你搜索 `TaskStatus`，看见下面两个结果：
+这篇文章把原来的 M01、M02、M03、M04 四个单元彻底打散并重新糅合。我们不再从 TypeScript 语法表开始，也不按文件目录逐个讲，而是从一名普通用户的一次操作出发，由浅入深看清四件事：
 
 ```text
-src/Task.ts
-src/utils/tasks.ts
+契约：进入系统的东西可信吗？
+过程：运行中发生的事情怎样被观察？
+资源：取消和结束时，外部工作真的收敛了吗？
+证据：我们怎样证明某条运行结论，而不是凭箭头讲故事？
 ```
 
-如果只看名字，你可能以为第二个是第一个的工具函数。实际情况完全不同：它们定义了两套不兼容的 `Task` 和 `TaskStatus`，服务两个不同领域。
+文中会保留真正帮助理解的源码、流程图、边界和实验，但删掉重复的语法展开与过度细碎的代码。目标不是让你背下 51 万行源码，而是建立一套可以迁移到 Spring AI、LangGraph、Java Agent 平台和企业 RAG 系统的思考方式。
 
-这给出本章第一条源码阅读纪律：
+---
+
+# 一、Claude Code 到底是什么
+
+在看源码之前，先把最容易混淆的三个东西分开。
+
+## 1. ChatBot、Copilot 和 Agent 有什么区别
+
+ChatBot 的典型行为是：
+
+```text
+用户提问 -> 模型回答 -> 结束
+```
+
+Copilot 更像一次局部预测：
+
+```text
+当前代码 -> 预测接下来几行 -> 用户决定是否接受
+```
+
+Agent 不一样。你给它的往往不是一个问题，而是一个目标：
+
+```text
+“帮我定位这个 Bug，修复后运行测试。”
+```
+
+它需要自己决定：
+
+1. 先读哪个文件；
+2. 是否搜索相关符号；
+3. 要不要执行测试；
+4. 测试失败后继续读什么；
+5. 修改哪些代码；
+6. 什么时候已经完成，可以停下来。
 
 ```mermaid
 flowchart LR
-  N["看见类型名"] --> I["记录 import path"]
-  I --> D["读类型声明和模块职责"]
-  D --> P["找生产者：谁构造它"]
-  D --> C["找消费者：谁按字段分支"]
-  P --> V["找运行校验：谁检查 unknown"]
-  C --> V
-  V --> B["写出能证明与不能证明的边界"]
+  USER["用户给出目标"] --> MODEL["模型观察当前上下文"]
+  MODEL --> DECIDE{"下一步做什么?"}
+  DECIDE -->|"使用工具"| TOOL["读文件 / 搜索 / Bash / 编辑"]
+  TOOL --> RESULT["工具结果进入上下文"]
+  RESULT --> MODEL
+  DECIDE -->|"可以结束"| ANSWER["向用户返回结果"]
 ```
 
-图里没有“相信名字”这一步。名称只是导航线索，模块路径和使用方式才决定语义。
+Agent 的核心因此不是“会聊天”，而是一个持续的 **感知—决策—行动—再感知** 循环。
 
-## 二、别急着钻源码：工业级 Agent 到底有哪三道安全门？
+## 2. 为什么 Agent 比普通聊天系统难得多
 
-> **这一节面试官真正想听的：** 不要把 type、schema 和 state machine 混成一句“类型安全”。它们执行时间不同、证明能力不同、失败后果也不同。
+聊天系统主要管理输入和输出。
 
-在进入真实源码前，先建立一个最小心智模型。
+Agent 还要管理：
 
-### 编译期类型
+- 消息历史；
+- 工具定义和工具参数；
+- 权限与危险操作；
+- 模型和工具的流式事件；
+- 子进程、网络流和定时器；
+- 取消、超时和后台任务；
+- Transcript 与恢复；
+- 运行状态、用量和错误；
+- 调用链与可观测证据。
+
+因此，一个 Agent 的可靠性并不只取决于模型。
+
+可以把它理解成一辆车：
+
+| 部分 | 在 Agent 中对应什么 |
+| --- | --- |
+| 发动机 | 大模型推理能力 |
+| 方向盘 | Prompt、工具描述和任务目标 |
+| 变速箱 | Query / Tool-Use Loop |
+| 刹车 | 权限、取消、超时和轮数限制 |
+| 安全带 | 运行时校验、状态迁移与恢复 |
+| 仪表盘 | Event、Trace、Transcript 和指标 |
+
+只换一台更强的发动机，并不会自动得到一辆能安全上路的车。
+
+---
+
+# 二、敲下回车后，Agent 内部发生了什么
+
+现在从一个最普通的场景开始。
+
+你在终端输入：
+
+```text
+帮我修复登录接口偶发的 500 错误，并运行测试。
+```
+
+很多人会把内部过程想成：
+
+```text
+用户输入 -> 调用大模型 -> 返回答案
+```
+
+真实情况更接近下面这条链：
+
+```mermaid
+flowchart TD
+  INPUT["用户输入 prompt"] --> ASK["ask(): 一次性 SDK 入口"]
+  ASK --> ENGINE["QueryEngine.submitMessage(): 管理会话"]
+  ENGINE --> PRE["processUserInput(): 处理命令和输入"]
+  PRE --> SHOULD{"shouldQuery?"}
+  SHOULD -->|"否"| LOCAL["本地命令直接产生结果"]
+  SHOULD -->|"是"| QUERY["query(): 事件委托层"]
+  QUERY --> LOOP["queryLoop(): 模型与工具循环"]
+  LOOP --> MODEL["流式调用模型"]
+  MODEL -->|"普通文本"| EVENTS["消息 / stream event"]
+  MODEL -->|"tool_use"| TOOL["校验、权限、执行工具"]
+  TOOL --> LOOP
+  EVENTS --> CONSUME["QueryEngine 边消费边更新状态"]
+  CONSUME --> SDK["UI / SDK / Transcript"]
+```
+
+这张图暂时不要求你记函数名，先看职责。
+
+## 1. `ask()`：一次调用的外包装
+
+`ask()` 适合 SDK 或 Headless 场景。它创建一个 `QueryEngine`，把配置、工具、权限回调、状态读写器和初始消息交给它，然后把 `submitMessage()` 产生的事件继续向外传。
+
+简化后像这样：
+
+```ts
+async function* ask(prompt: string) {
+  const engine = new QueryEngine(config)
+
+  try {
+    yield* engine.submitMessage(prompt)
+  } finally {
+    saveReadFileState(engine.getReadFileState())
+  }
+}
+```
+
+这里已经埋下两个后文会讲的重要点：
+
+- `yield*` 不是普通函数调用，它会转发一串事件；
+- `finally` 只能证明清理或交接逻辑被执行，不能自动证明所有网络请求和子进程都已经停止。
+
+## 2. `QueryEngine`：会话状态的所有者
+
+`QueryEngine` 不只负责“调一次模型”。它持有一段会话会跨轮使用的状态，例如：
+
+- `mutableMessages`：累计消息；
+- `abortController`：取消入口；
+- `permissionDenials`：权限拒绝记录；
+- `totalUsage`：累计用量；
+- `readFileState`：文件读取状态；
+- 已发现的 Skill 和 Memory 路径。
+
+它更像一名会话管家：
+
+> Query 负责产生过程，QueryEngine 负责把过程沉淀成会话状态和对外结果。
+
+## 3. 不是每条输入都会调用模型
+
+`submitMessage()` 会先运行 `processUserInput()`。这个阶段可能识别本地 slash command，并返回一个 `shouldQuery` 标志。
+
+```ts
+const processed = await processUserInput(...)
+
+this.mutableMessages.push(...processed.messages)
+const messages = [...this.mutableMessages]
+
+if (!processed.shouldQuery) {
+  // 返回本地命令结果
+  return
+}
+
+for await (const message of query({ messages, ... })) {
+  // 消费模型与工具产生的事件
+}
+```
+
+这个顺序非常值得注意：
+
+```text
+shouldQuery = false
+```
+
+只代表“不进入模型 Query”，不代表“什么都没发生”。用户输入可能已经被解析、追加到消息、写入 Transcript，并产生本地结果。
+
+这也是后面“不要把连线当调用”的第一个例子：代码里存在 `query()` 调用点，不代表每次 `submitMessage()` 都会走到它。
+
+## 4. Query 不是一次返回一个大对象
+
+`QueryEngine` 使用：
+
+```ts
+for await (const message of query(...)) {
+  // 每来一个事件，就立即处理一个事件
+}
+```
+
+因此，模型的一小段文本、工具进度、assistant 消息、usage 更新和控制事件，都可以在整轮结束前被处理。
+
+接下来四章要解释的，其实就是这条完整链路周围的四道缰绳。
+
+---
+
+# 三、第一道缰绳：类型、校验与状态迁移
+
+很多 TypeScript 初学者会说：
+
+> “我们用了 TypeScript，所以模型返回的数据是安全的。”
+
+这句话只对了一半。
+
+TypeScript 能检查开发者写的 TypeScript 代码，但模型 JSON、磁盘文件、网络 payload 并没有参加你的 `tsc` 编译。
+
+一个工业级 Agent 至少需要三道门：
+
+```mermaid
+flowchart LR
+  RAW["模型 JSON / 文件 / 网络数据"] --> VALIDATE["运行时 schema / parser"]
+  VALIDATE -->|"失败"| REJECT["拒绝或迁移"]
+  VALIDATE -->|"成功"| TYPE["内部类型化对象"]
+  TYPE --> TRANSITION["领域迁移规则"]
+  TRANSITION -->|"非法边"| STOP["不修改状态"]
+  TRANSITION -->|"合法边"| NEXT["进入下一状态"]
+```
+
+| 层次 | 回答的问题 | 常见实现 |
+| --- | --- | --- |
+| 编译期类型 | 内部代码允许构造和访问什么 | 联合、泛型、readonly、sealed hierarchy |
+| 运行时校验 | 外部数据实际上是什么 | Zod、JSON Schema、Pydantic、Bean Validation |
+| 状态迁移 | 当前状态能不能变成目标状态 | transition function、状态机、CAS、事务 |
+
+## 1. 类型不是注释，但也不是防火墙
+
+例如：
 
 ```ts
 type RunStatus = 'pending' | 'running' | 'completed'
 ```
 
-竖线 `|` 表示联合：`RunStatus` 可以是三个字面量之一。编辑器和 `tsc` 会拒绝：
+编译器会拒绝：
 
 ```ts
 const status: RunStatus = 'sleeping'
 ```
 
-但生成 JavaScript 后，`RunStatus` 不存在。若磁盘文件里写着 `"sleeping"`，`JSON.parse()` 不会因为你定义过这个类型就自动拒绝它。
+但运行后的 JavaScript 中，这个类型已经被擦除了。
 
-### 运行时验证
+如果磁盘 JSON 写着：
+
+```json
+{ "status": "sleeping" }
+```
+
+`JSON.parse()` 不会因为你定义过 `RunStatus` 就自动报错。
+
+真正的运行边界必须执行：
 
 ```ts
 const RunStatusSchema = z.enum(['pending', 'running', 'completed'])
-const result = RunStatusSchema.safeParse(rawValue)
+const result = RunStatusSchema.safeParse(raw.status)
 ```
 
-这里真正运行的是 Zod。`safeParse()` 接收现实世界的数据，并返回成功或失败。TypeScript 可以再用 `z.infer` 从 schema 推出静态类型，使“运行校验的值域”和“内部编译类型”尽量保持同源。
+所以准确说法是：
 
-### 状态迁移
+> 类型约束系统内部的开发行为；Schema 检查进入系统的现实数据。
 
-即使 `pending`、`running`、`completed` 都是合法值，也不代表任意两者之间都能跳转。通常你希望：
+## 2. 同名类型，不一定属于同一个世界
+
+Claude Code 快照里有两套 `TaskStatus`。
+
+第一套位于 `src/Task.ts`，表示运行任务：
 
 ```text
-pending -> running -> completed
+pending / running / completed / failed / killed
 ```
 
-而不是：
+第二套位于 `src/utils/tasks.ts`，表示协作任务清单：
+
+```text
+pending / in_progress / completed
+```
+
+它们名字相同，却属于两个不同领域：
+
+```mermaid
+flowchart LR
+  subgraph RUNTIME["运行任务"]
+    A["local_bash / local_agent / remote_agent ..."] --> B["pending / running / completed / failed / killed"]
+  end
+
+  subgraph WORK["协作任务清单"]
+    C["subject / owner / blockedBy ..."] --> D["pending / in_progress / completed"]
+  end
+
+  RUNTIME -. "同名但不可直接互换" .- WORK
+```
+
+这给出一条非常实用的源码阅读纪律：
+
+> 类型名只是线索，模块路径、生产者、消费者和校验器共同决定语义。
+
+企业项目里，最好直接使用更明确的名字：
+
+```text
+RuntimeTaskStatus
+WorkItemStatus
+```
+
+不要因为两个领域都出现 `completed`，就用字符串直接映射。
+
+## 3. 判别联合为什么特别适合 Agent
+
+Agent 系统中有很多“看起来都是消息，实际上行为完全不同”的对象：
+
+```ts
+type Message =
+  | { type: 'user'; content: string }
+  | { type: 'assistant'; content: string }
+  | { type: 'progress'; percent: number }
+  | { type: 'system'; text: string }
+```
+
+`type` 是判别字段。
+
+当代码进入：
+
+```ts
+if (message.type === 'progress') {
+  renderProgress(message.percent)
+}
+```
+
+TypeScript 才知道这里可以访问 `percent`。
+
+它带来的价值不是“少写几个类型转换”，而是把控制流和数据形状绑定在一起：
+
+- 新增消息类型时，哪些消费者必须修改；
+- 某个分支能访问哪些字段；
+- 哪些事件需要持久化；
+- 哪些事件只用于 UI；
+- 哪些失败是普通事件，哪些会终止迭代器。
+
+不过要注意：同一系统不一定只有一份“宇宙 Message”。持久化消息、模型 content block、SDK 输出和 UI 渲染对象可以是不同的联合视图。
+
+## 4. Tool 泛型解决一致性，Schema 解决真实性
+
+真实 Tool 类型的核心思想可以缩成：
+
+```ts
+type Tool<InputSchema, Output, Progress> = {
+  inputSchema: InputSchema
+  call(input: Infer<InputSchema>): Promise<ToolResult<Output>>
+  isReadOnly(input: Infer<InputSchema>): boolean
+  isConcurrencySafe(input: Infer<InputSchema>): boolean
+}
+```
+
+同一份 `InputSchema` 同时影响：
+
+- 工具执行参数；
+- 工具描述；
+- 权限判断；
+- 是否只读；
+- 是否可并发；
+- 是否危险。
+
+这比每个函数各写一套相似的参数接口可靠得多。
+
+但模型传回来的仍然只是现实世界中的 JSON，所以执行前必须先做：
+
+```text
+模型 tool input
+-> inputSchema.safeParse
+-> 类型化 input
+-> 权限与能力判断
+-> call(input)
+-> ToolResult
+```
+
+泛型和 Schema 缺一不可：
+
+- 只有泛型：挡不住模型和磁盘里的错误数据；
+- 只有 Schema：内部调用点之间缺少一致性传播。
+
+## 5. 状态值合法，不代表状态变化合法
+
+下面两个值都合法：
+
+```text
+running
+completed
+```
+
+但这不代表允许：
 
 ```text
 completed -> running
 ```
 
-联合类型只能回答“右边是不是合法值”，不能回答“当前状态能不能到右边”。后者需要 transition function、状态机、数据库条件更新或测试。
+联合类型只能回答“右边是不是合法值”，不能回答“当前能不能走到右边”。
+
+因此生产系统通常需要集中迁移规则：
+
+```ts
+const transitions = {
+  pending: ['running'],
+  running: ['completed', 'failed', 'cancelled'],
+  completed: [],
+  failed: [],
+  cancelled: [],
+} as const
+```
+
+分布式环境还要再补：
+
+- 版本号；
+- compare-and-set；
+- 数据库条件更新；
+- 幂等事件；
+- 重复消费与恢复策略。
+
+### 本章小结
+
+第一道缰绳可以压成三句话：
+
+1. **内部代码靠类型保持一致。**
+2. **外部数据靠运行时校验进入系统。**
+3. **状态变化靠迁移规则守住时间顺序。**
+
+这三层混在一起，是初学者最常见的设计错误。
+
+---
+
+# 四、第二道缰绳：一次运行不是结果，而是一条事件流
+
+理解了“什么数据可以进入系统”，下一个问题是：
+
+> 一次可能持续几十秒、甚至几分钟的 Agent 运行，应该怎样交付给调用方？
+
+## 1. `Promise` 只能交付一次完成
+
+普通异步函数：
+
+```ts
+async function runAgent(): Promise<FinalAnswer> {
+  // 很久以后
+  return answer
+}
+```
+
+调用方只能知道：
+
+```text
+还没完成 / 已完成 / 失败
+```
+
+但真实 Agent 过程里还会出现：
+
+- 模型文本 delta；
+- assistant 消息；
+- 工具开始；
+- 工具进度；
+- 权限请求；
+- 工具结果；
+- 重试提示；
+- 上下文压缩边界；
+- 用量更新；
+- 取消与终止原因。
+
+因此 Claude Code 大量使用 `AsyncGenerator` 和 `AsyncIterable`。
+
+## 2. 先用水龙头理解异步生成器
+
+`Promise` 像一桶水：接满以后一次性交给你。
+
+`AsyncGenerator` 像水龙头：消费者每次请求一点，生产者运行到一个 `yield` 就暂停。
+
+```ts
+async function* events() {
+  yield { type: 'run.started' }
+  yield { type: 'model.delta', text: '正在检查...' }
+  yield { type: 'tool.progress', percent: 50 }
+  return { reason: 'completed' }
+}
+```
+
+第一次调用生成器函数，只创建 iterator；第一次 `.next()` 才真正进入函数体。
+
+```mermaid
+sequenceDiagram
+  participant C as Consumer
+  participant G as AsyncGenerator
+  C->>G: next()
+  G-->>C: done=false, run.started
+  Note over G: 暂停在第一个 yield 后
+  C->>G: next()
+  G-->>C: done=false, model.delta
+  C->>G: next()
+  G-->>C: done=false, tool.progress
+  C->>G: next()
+  G-->>C: done=true, Terminal
+```
+
+## 3. `yield*` 与 `for await` 解决的不是同一件事
+
+Claude Code 的 `query()` 类似：
+
+```ts
+async function* query(params) {
+  const terminal = yield* queryLoop(params)
+  notifyCompletedCommands()
+  return terminal
+}
+```
+
+`yield*` 是生成器之间的委托，它做两件事：
+
+1. 把 `queryLoop()` yield 的每个事件原样向外转发；
+2. 子生成器正常 `return` 时，取得它的终值。
+
+而 `QueryEngine` 使用：
+
+```ts
+for await (const message of query(...)) {
+  consume(message)
+}
+```
+
+`for await` 只消费 `yield` 出来的值。循环自然结束时，语法没有变量接收生成器的 `return value`。
+
+因此要区分两份协议：
+
+```text
+Event：运行过程中发生了什么
+Terminal：生成器最终为什么结束
+```
+
+跨语言系统更适合把关键完成状态设计成显式事件，因为 Python async generator 不允许携带 TypeScript 那样的 return value。
+
+## 4. 为什么 QueryEngine 要边消费边更新状态
+
+每个 Query event 到达后，QueryEngine 可以立即完成不同副作用：
 
 ```mermaid
 flowchart TD
-  RAW["外部 JSON / 模型输入 / 文件"] --> VALIDATE["运行时 schema 或 parser"]
-  VALIDATE -->|"失败"| REJECT["拒绝或迁移"]
-  VALIDATE -->|"成功"| TYPED["内部类型化值"]
-  TYPED --> BRANCH["联合、泛型、readonly 约束内部代码"]
-  BRANCH --> TRANSITION["领域迁移规则检查当前边"]
-  TRANSITION -->|"非法"| STOP["不改变状态"]
-  TRANSITION -->|"合法"| NEXT["写入下一状态"]
+  EVENT["query event"] --> TYPE{"message.type"}
+  TYPE -->|"assistant / user"| STORE["追加 mutableMessages"]
+  TYPE -->|"progress"| PROGRESS["状态、Transcript、UI"]
+  TYPE -->|"stream_event"| USAGE["更新 usage / stop reason"]
+  TYPE -->|"attachment"| CONTROL["结构化输出或控制事件"]
+  STORE --> SDK["normalize 后向 SDK yield"]
+  PROGRESS --> SDK
+  USAGE --> SDK
 ```
 
-这张图以后会反复出现。消息从 SDK 进入、Tool input 从模型进入、Transcript 从磁盘恢复时，都必须先问：现在处于哪一层？
-
-## 三、第一套 Task：运行任务的类型到底承诺了什么？
-
-打开 `claude-code-CLI/src/Task.ts`。文件开头给出两组字符串联合：
+如果把 Query 改成：
 
 ```ts
-export type TaskType =
-  | 'local_bash'
-  | 'local_agent'
-  | 'remote_agent'
-  | 'in_process_teammate'
-  | 'local_workflow'
-  | 'monitor_mcp'
-  | 'dream'
-
-export type TaskStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'killed'
+await query(): Promise<Message[]>
 ```
 
-对 TypeScript 初学者，先读懂语法：`export` 允许其他模块导入；`type` 给一个类型表达式命名；每个引号里的值既是字符串，也是比 `string` 更窄的字面量类型。
+那么 UI、Transcript 和用量统计都只能在整轮结束后批量处理。长工具运行期间，系统就失去了中间观测点。
 
-如果一个参数是 `TaskStatus`，编译器允许五个值，不允许任意字符串。这已经比 Java 的裸字符串常量安全，接近一个 enum。但运行时没有 TypeScript enum 对象，也没有自动的 `values()`。
+## 5. 流式不等于没有缓冲
 
-紧接着是：
-
-```ts
-export function isTerminalTaskStatus(status: TaskStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'killed'
-}
-```
-
-这段函数增加了一条运行语义：三个值被当前系统视为终态。注意它返回普通 `boolean`，不修改任务，也不阻止调用者稍后把状态改回 `running`。它是终态分类谓词，不是状态机。
-
-继续看 `TaskStateBase`：
-
-```ts
-export type TaskStateBase = {
-  id: string
-  type: TaskType
-  status: TaskStatus
-  description: string
-  toolUseId?: string
-  startTime: number
-  endTime?: number
-  // 其余字段省略
-}
-```
-
-问自己两个问题：
-
-1. `?` 是什么意思？
-2. `type` 和 `status` 是否已经形成判别联合？
-
-`toolUseId?: string` 表示属性可以不存在；它不是“属性一定存在但值可能为 null”。Java 常用 nullable 字段表达二者，TypeScript 的对象类型能区分 absent 与 present-undefined，但具体 API 是否区分仍要看运行代码。
-
-第二个问题的答案是否定的。这里只是两个独立字段：
+这是一个非常重要的边界：
 
 ```text
-type: TaskType
-status: TaskStatus
+AsyncIterable != 网络流
+AsyncIterable != 无界安全
+AsyncIterable != 自动背压
 ```
 
-编译器不会根据 `type === 'local_bash'` 自动出现 Bash 专属字段，也不会知道某种 task type 不能处于某个状态。若要表达这种关系，需要真正的对象联合：
+一个对象可以对外提供 AsyncIterable 接口，内部却维护一个数组：
 
 ```ts
-type TaskState =
-  | { type: 'local_bash'; pid: number; status: TaskStatus }
-  | { type: 'remote_agent'; remoteSessionId: string; status: TaskStatus }
+class PushQueue<T> {
+  private queue: T[] = []
+
+  enqueue(value: T) {
+    this.queue.push(value)
+  }
+
+  async next() {
+    return this.queue.shift()
+  }
+}
 ```
 
-只有这种形状，`type` 才是对象联合的判别字段。真实 `TaskStateBase` 没有作出这项承诺，所以教材不能替它脑补。
+如果生产者每秒写入 10,000 个 token chunk，而消费者每秒只读取 100 个，数组仍然会持续增长并最终 OOM。
 
-## 四、第二套 Task：同名不等于同一个领域
+Claude Code 的工具执行器也会缓存 pending progress 和 results，再由 Query Loop drain。
 
-现在打开 `claude-code-CLI/src/utils/tasks.ts`。这里不是运行任务执行器，而是协作任务清单。它的状态只有：
+所以设计流协议时，要明确：
+
+- 队列上限；
+- 满时阻塞、合并、丢弃还是失败；
+- token delta 是否可以合并；
+- progress 是否只保留最新值；
+- tool result 是否必须可靠交付；
+- 多个消费者怎样 fan-out，而不是竞争同一个 iterator。
+
+## 6. 错误有两条通道
+
+Agent 流里的错误不能全部画成一根红线。
+
+第一种是异常：
 
 ```ts
-export const TASK_STATUSES = ['pending', 'in_progress', 'completed'] as const
+throw new Error('network failed')
+```
 
-export const TaskStatusSchema = lazySchema(() =>
-  z.enum(['pending', 'in_progress', 'completed']),
+它会让消费者等待的 `.next()` reject，通常表示当前事件流无法继续。
+
+第二种是错误事件：
+
+```ts
+yield {
+  type: 'tool_result',
+  is_error: true,
+  content: 'permission denied',
+}
+```
+
+对迭代器来说，它仍是一个普通值。模型或业务策略可以看到它以后继续决策。
+
+可以概括为：
+
+```text
+不可继续的协议或运行时失败 -> throw
+可以被模型、用户或策略处理的业务失败 -> 结构化 event
+```
+
+## 7. 已经发生的事件不会因为后续异常自动回滚
+
+假设 Query 先 yield 一条 assistant 消息，QueryEngine 已经：
+
+- push 到 `mutableMessages`；
+- 写入 Transcript；
+- 向 SDK 用户显示。
+
+下一次 `.next()` 才抛异常。
+
+前面的副作用不会自动撤销。AsyncGenerator 不是数据库事务。
+
+```mermaid
+sequenceDiagram
+  participant Q as Query
+  participant E as QueryEngine
+  participant S as State
+  participant U as User
+  Q-->>E: assistant partial
+  E->>S: append message
+  E-->>U: display partial
+  Q--xE: throw
+  Note over S: 已提交状态仍然存在
+```
+
+企业系统要为部分失败明确选择：
+
+- 接受 append-only 历史，并记录失败边界；
+- 对可逆状态做补偿；
+- 对外部 Tool 副作用使用幂等键或 Saga；
+- 用 checkpoint 定义恢复点。
+
+### 本章小结
+
+第二道缰绳的核心是：
+
+> Agent 首先是一段过程，其次才是一个结果。
+
+过程需要事件、顺序、缓冲、完成、错误和关闭协议。只说“我们支持流式输出”远远不够。
+
+---
+
+# 五、第三道缰绳：`await` 之后还有资源生命周期
+
+到这里，很多人已经能解释异步生成器，却仍然会在取消和子进程上犯错。
+
+最典型的误解是：
+
+> “调用 `abort()` 以后，`await` 抛异常了，所以工作已经停止。”
+
+不一定。
+
+## 1. `await` 只暂停当前函数
+
+看起来是一行：
+
+```ts
+const result = await exec(command, signal)
+```
+
+背后可能同时存在：
+
+- child process；
+- stdout/stderr；
+- 输出文件；
+- progress poller；
+- timeout timer；
+- AbortSignal listener；
+- Promise continuation；
+- background task owner。
+
+`await` 暂停的是当前 async function，不是整个 Node 进程。
+
+可以先建立一个够用的事件循环模型：
+
+```text
+当前同步调用栈
+-> Promise / microtask continuation
+-> timer、I/O、child-process 等宿主回调
+```
+
+它不是要你死背 Node phases，而是提醒你：
+
+> 状态在哪一个 continuation 被修改，会决定其他调用方什么时候看见它。
+
+## 2. 一条 Bash 命令有多个所有者
+
+Claude Code 的 Bash 路径可以简化为：
+
+```mermaid
+flowchart TD
+  MODEL["模型产生 Bash tool_use"] --> TOOL["BashTool.call"]
+  TOOL --> GEN["runShellCommand()"]
+  GEN --> EXEC["Shell.exec()"]
+  EXEC --> SPAWN["child_process.spawn"]
+  SPAWN --> COMMAND["ShellCommandImpl"]
+  COMMAND --> OUTPUT["TaskOutput / stdout / stderr"]
+  OUTPUT --> PROGRESS["progress event"]
+  COMMAND --> RESULT["ExecResult"]
+  COMMAND --> BG["background owner"]
+  COMMAND --> KILL["kill / timeout / abort"]
+```
+
+几个对象各管一段生命周期：
+
+| 对象 | 主要责任 |
+| --- | --- |
+| `Shell.exec()` | spawn 前装配、cwd、环境和输出模式 |
+| `ShellCommandImpl` | child、timeout、abort listener、状态和 result |
+| `TaskOutput` | 输出存储、预览和 progress |
+| `runShellCommand()` | 前台等待、progress yield、后台转换 |
+
+把所有逻辑塞进一个 `runBash()` 大函数，最容易造成重复清理、无人清理和所有权转移不清。
+
+## 3. 默认输出不一定经过 `child.stdout`
+
+很多人看到 `spawn` 会自动画：
+
+```text
+child.stdout -> data event -> UI
+```
+
+但 Claude Code 的默认 Bash 路径可以把 stdout 和 stderr 指向同一个输出文件，由 `TaskOutput` 定期读取文件尾部生成进度。
+
+只有需要实时 callback 的场景才使用 pipe mode：
+
+```mermaid
+flowchart TD
+  MODE{"输出模式"}
+  MODE -->|"file mode"| FILE["stdout/stderr -> 文件 fd"]
+  FILE --> POLL["TaskOutput 轮询文件尾部"]
+  POLL --> EVENT["progress event"]
+
+  MODE -->|"pipe mode"| PIPE["child.stdout / stderr Readable"]
+  PIPE --> DATA["data listener / buffer"]
+  DATA --> EVENT
+```
+
+file mode 的好处是大输出不必全部驻留 JS heap，也便于后台任务继续写入；代价是要处理文件轮询、大小 watchdog 和平台 fd 语义。
+
+这说明：不要看到抽象名叫 “Stream”，就想当然认为底层一定是一条 Node Readable。
+
+## 4. timeout、abort、kill、background 必须是四个动词
+
+| 词 | 真正含义 | child 是否一定停止 |
+| --- | --- | --- |
+| timeout | 前台预算耗尽 | 不一定，可能转后台 |
+| abort | 发出取消通知和 reason | 不一定，取决于 listener |
+| kill | 请求终止进程或进程树 | 请求发出也不等于已确认退出 |
+| background | 把运行所有权交给后台任务 | 不停止，child 继续 |
+
+Claude Code 对某些 `interrupt` reason 不立即 kill，而是给上层转后台的机会。对其他取消原因才进入 kill 路径。
+
+因此不能用一个布尔字段：
+
+```ts
+cancelled: true
+```
+
+覆盖所有语义。
+
+更稳健的领域事件是：
+
+```text
+CancelRequested
+TerminationSent
+ExitConfirmed
+BackgroundOwnershipTransferred
+CleanupFinished
+```
+
+## 5. AbortSignal 是通知，不是强杀 API
+
+`AbortController.abort(reason)` 会：
+
+- 把 signal 设为 aborted；
+- 保存 reason；
+- 通知 listeners。
+
+真正动作必须由资源所有者实现：
+
+```text
+模型请求 owner -> abort HTTP request
+子进程 owner -> terminate / tree-kill
+Readable owner -> destroy stream
+timer owner -> clearTimeout
+工具 owner -> discard or cancel
+```
+
+因此：
+
+```text
+signal.aborted = true
+```
+
+只能证明取消通知已发出，不能证明：
+
+- socket 已关闭；
+- child 已退出；
+- 孙进程已停止；
+- fd 已释放；
+- 工具 promise 已 settled。
+
+## 6. 请求终止与确认退出是两个时刻
+
+某些实现为了让上层快速结束，会在发出 tree-kill 后立即 resolve 一个逻辑结果，而不等待真正的 OS `exit` 事件。
+
+这种设计不是错，但协议必须说清楚：
+
+```text
+result resolved = 逻辑上不再等待
+```
+
+不一定等于：
+
+```text
+process tree fully exited = 操作系统资源已经确认收敛
+```
+
+安全要求较高的工具执行平台，应该在释放配额、删除临时目录或复用工作区之前等待更强的确认。
+
+## 7. `Promise.race` 不会取消输家
+
+```ts
+await Promise.race([
+  command.result,
+  timeoutPromise,
+])
+```
+
+只表示调用方先观察到谁完成。
+
+如果 timeout 赢了：
+
+- command 仍然可能运行；
+- 网络请求仍然可能发送数据；
+- timer/listener 仍然需要清理；
+- 还需要显式 abort、kill 或 ownership transfer。
+
+所以可靠 timeout 是四件事：
+
+```text
+deadline
+-> 触发取消动作
+-> 等待有限确认
+-> cleanup timer/listener
+```
+
+## 8. cleanup 与 cancel 不能互换
+
+cleanup 通常负责：
+
+- 移除 listener；
+- 清 timer；
+- 释放引用；
+- 关闭 buffer 或 poller。
+
+它不一定负责终止仍在运行的 child。
+
+如果先 cleanup，再丢掉一个仍然运行的 child handle，就制造了孤儿资源。
+
+合理顺序通常是：
+
+```text
+请求停止
+-> 等待或升级终止
+-> 确认所有权转移或退出
+-> cleanup
+```
+
+## 9. graceful shutdown 必须有预算
+
+服务退出时有两个极端都不对：
+
+- 无限等待所有资源完美结束：部署和故障恢复会卡死；
+- 直接 `process.exit()`：可能丢 Transcript、破坏终端状态、留下外部工作。
+
+Claude Code 的思路是分层预算：
+
+```mermaid
+flowchart TD
+  SIGNAL["SIGINT / SIGTERM / exit"] --> ONCE{"是否已进入 shutdown?"}
+  ONCE -->|"是"| RETURN["避免重复进入"]
+  ONCE -->|"否"| SAFE["设置 failsafe 总预算"]
+  SAFE --> TERM["优先恢复终端和用户状态"]
+  TERM --> CLEAN["有限时间执行核心 cleanup"]
+  CLEAN --> HOOK["有预算的 SessionEnd hooks"]
+  HOOK --> METRIC["短预算 flush telemetry"]
+  METRIC --> EXIT["force exit"]
+```
+
+企业 Agent 服务也应该按价值排序：
+
+1. 停止接收新任务；
+2. 持久化 run/checkpoint 与幂等状态；
+3. 取消模型和工具；
+4. 等待有限确认并升级强杀；
+5. 尽力 flush 次要 telemetry；
+6. 到达总预算后退出。
+
+### 本章小结
+
+第三道缰绳可以压成一句话：
+
+> 取消是意图，终止是动作，退出是事实，清理是收尾；四者不是同一个事件。
+
+---
+
+# 六、第四道缰绳：不要把代码里的连线当成真实调用
+
+我们已经知道系统有什么契约、过程和资源。最后一个问题是：
+
+> 你怎样证明自己对源码的解释是真的？
+
+很多源码文章最大的风险，不是漏掉细节，而是把“结构上相关”悄悄升级成“运行时一定发生”。
+
+## 1. 源码里的关系不是一种关系
+
+假设工具给你四条边：
+
+```text
+QueryEngine imports query
+QueryEngine contains submitMessage
+submitMessage calls query
+submitMessage indirect_call tool
+```
+
+它们支持的结论完全不同：
+
+| 关系 | 最多能证明什么 |
+| --- | --- |
+| import | 模块绑定或类型可见 |
+| contains | 方法属于这个类或文件 |
+| call site | 某条代码路径可以调用目标 |
+| callback injection | 运行时会调用某个协议，具体实现由装配决定 |
+| state mutation | 某个 owner 的字段确实被修改 |
+| runtime trace | 这一次输入实际走过该路径 |
+
+因此可靠的证据链应该逐层增强：
+
+```mermaid
+flowchart TD
+  Q["提出可证伪问题"] --> SEARCH["搜索名字和候选边"]
+  SEARCH --> SITE["打开决定性 call site"]
+  SITE --> GUARD["向上找 guard 与 caller"]
+  SITE --> DATA["向下追参数、事件和返回"]
+  GUARD --> OWNER["定位 state owner 与 mutation"]
+  DATA --> OWNER
+  OWNER --> FAIL["追失败、取消和 finally"]
+  FAIL --> OBSERVE["测试、fake、日志或 trace"]
+  OBSERVE --> CLAIM["写出有边界的结论"]
+```
+
+## 2. import 了 `query`，不代表每次都调用
+
+`QueryEngine.ts` 确实 import 了 `query`，也存在真实调用点：
+
+```ts
+for await (const message of query({...})) {
+  // 消费事件
+}
+```
+
+但要回答“每条输入是否都会调用”，还必须向上找到：
+
+```ts
+if (!shouldQuery) {
+  return
+}
+```
+
+所以准确结论是：
+
+> `submitMessage()` 包含真实 Query 调用点，但本次是否到达由 `processUserInput()` 返回的 `shouldQuery` 决定。
+
+“存在边”和“这次走边”是两个问题。
+
+## 3. 参数里出现一个对象，不代表调用了它
+
+下面代码调用的是 `canUseTool`：
+
+```ts
+const result = await canUseTool(
+  tool,
+  input,
+  context,
 )
-
-export type TaskStatus = z.infer<ReturnType<typeof TaskStatusSchema>>
 ```
 
-先看 `as const`。如果没有它，数组常被推断成可变的 `string[]`；加上 `as const` 后，元素保留字面量，数组也成为只读 tuple 候选。这里真正被 `TaskStatus` 使用的是 `z.enum()` 与 `z.infer`，`TASK_STATUSES` 还服务其他消费点。
+`tool` 在这里是参数。
 
-`ReturnType<typeof TaskStatusSchema>` 可以从函数类型取出返回类型；`z.infer<...>` 再从 schema 类型推出解析成功后的值类型。尖括号表示泛型参数，不是 Java 的继承语法。
+它不等于：
 
-两个 Task 领域必须分开画：
-
-```mermaid
-flowchart LR
-  subgraph ORCH["src/Task.ts：运行任务编排"]
-    OT["Task = name + type + kill()"]
-    OS["pending / running / completed / failed / killed"]
-    TERM["isTerminalTaskStatus() 只分类终态"]
-    OT --> OS --> TERM
-  end
-
-  subgraph TODO["src/utils/tasks.ts：协作任务清单"]
-    TT["Task = subject + owner + blocks + blockedBy ..."]
-    TS["pending / in_progress / completed"]
-    ZOD["TaskSchema().safeParse()"]
-    TT --> TS --> ZOD
-  end
-
-  ORCH -. "同名，不同领域，不可互换" .- TODO
+```ts
+tool()
 ```
 
-这不是命名风格问题，而是会导致真实错误的边界。把 `running` 写进协作任务文件，当前 Zod schema 不接受；把 `in_progress` 赋给 `Task.ts` 的 `TaskStatus`，`tsc` 不接受。
+也不等于：
 
-### schema 前还有条件迁移
+```ts
+tool.run()
+```
 
-`utils/tasks.ts:getTask()` 在解析文件时包含旧状态兼容，但它受环境条件保护：只有 `process.env.USER_TYPE === 'ant'`，才把旧值映射到当前值，例如 `open -> pending`、`resolved -> completed`，以及若干过程状态到 `in_progress`。
+静态图工具可能因为符号邻接推断出“间接调用”，但源码回读可以直接否定这个候选。
 
-非 ant 环境不会走这段迁移，旧值无法通过当前 schema，读取路径返回 `null`。所以准确表述是“特定环境在 schema 前执行兼容迁移”，不是“TaskStatus 会自动兼容旧值”。
+这条纪律对 Agent 源码尤其重要，因为 Tool、Model Adapter、Hook 和 Permission Policy 经常以函数或对象形式被注入。
 
-这也展示了一个企业系统常见顺序：
+## 4. 找到 state owner，比列出函数名更重要
+
+源码追踪如果只得到：
 
 ```text
-旧数据 -> 有版本和环境边界的迁移 -> 当前 schema 校验 -> 当前领域对象
+ask -> submitMessage -> query
 ```
 
-若迁移发生在 schema 之后，旧数据已经先被拒绝；若迁移没有边界，错误值可能被静默美化。
-
-## 五、Agent 怎么知道自己拿到的是哪一种消息？
-
-我们暂时离开 Task，先掌握一个贯穿整个 Agent 系统的能力：控制流收窄。
-
-考虑这个 clean-room 联合：
-
-```ts
-type Message =
-  | { type: 'user'; content: string }
-  | { type: 'assistant'; blocks: Array<unknown> }
-  | { type: 'progress'; completed: number }
-```
-
-在分支前，`message` 只能访问三种成员共同拥有的 `type`。进入分支后：
-
-```ts
-if (message.type === 'user') {
-  console.log(message.content)
-}
-```
-
-编译器根据运行条件把 `message` 收窄为 user 变体，因此 `content` 合法。如果这里写 `message.blocks`，编译器会拒绝。
-
-```mermaid
-flowchart TD
-  ALL["Message 联合"] --> TEST{"message.type"}
-  TEST -->|"user"| U["只允许 user 字段"]
-  TEST -->|"assistant"| A["只允许 assistant 字段"]
-  TEST -->|"progress"| P["只允许 progress 字段"]
-  U --> JOIN["分支结束后回到共同字段"]
-  A --> JOIN
-  P --> JOIN
-```
-
-### 类型谓词让辅助函数也能收窄
-
-真实 `utils/messages.ts` 中有：
-
-```ts
-return messages.findLast(
-  (msg): msg is AssistantMessage => msg.type === 'assistant',
-)
-```
-
-`msg is AssistantMessage` 是类型谓词。它告诉 TypeScript：当这个函数返回 true 时，参数可以被当作 `AssistantMessage`。因此 `findLast()` 的结果从宽泛 `Message | undefined` 变成 `AssistantMessage | undefined`。
-
-谓词仍然需要诚实。下面这种函数可以编译，却在逻辑上撒谎：
-
-```ts
-function isAssistant(value: Message): value is AssistantMessage {
-  return true
-}
-```
-
-类型谓词不是运行时魔法，它只是把你的检查结论反馈给编译器。审查谓词时必须读函数体。
-
-### `never` 把未来变更变成编译反馈
-
-`utils/messages.ts:getPlanPhase4Section()` 的默认分支使用：
-
-```ts
-default:
-  variant satisfies never
-  return PLAN_PHASE4_CONTROL
-```
-
-当所有联合成员都已被 case 处理，默认分支里的 `variant` 应该收窄成 `never`，表示理论上没有可能值。未来若新增 variant 却忘记新增 case，`variant` 不再是 `never`，`tsc` 会报错。
-
-`satisfies` 与 `as` 的方向相反：
-
-- `expression satisfies Target`：请编译器检查它确实兼容 Target，同时尽量保留表达式自身的精确类型；
-- `expression as Target`：请编译器把它按 Target 看待，在某些情况下会覆盖原有怀疑。
-
-因此穷尽检查喜欢 `satisfies never`，外部输入边界不应该靠 `as Message`。
-
-## 六、Tool 泛型为什么不是“写着好看”？
-
-> **先带着一个问题看源码：** 如果 Tool 参数改了，执行、权限、只读判断、并发判断和进度回调，谁来保证它们不会各说各话？
-
-进入 `claude-code-CLI/src/Tool.ts`。真实 Tool 的主体是：
-
-```ts
-export type Tool<
-  Input extends AnyObject = AnyObject,
-  Output = unknown,
-  P extends ToolProgressData = ToolProgressData,
-> = {
-  call(
-    args: z.infer<Input>,
-    context: ToolUseContext,
-    canUseTool: CanUseToolFn,
-    parentMessage: AssistantMessage,
-    onProgress?: ToolCallProgress<P>,
-  ): Promise<ToolResult<Output>>
-
-  readonly inputSchema: Input
-  readonly name: string
-  isConcurrencySafe(input: z.infer<Input>): boolean
-  isReadOnly(input: z.infer<Input>): boolean
-  // 其余能力省略
-}
-```
-
-逐层读：
-
-- `Input extends AnyObject` 表示 Input 必须满足 Zod object schema 的类型约束；
-- `= AnyObject` 是默认泛型参数，调用者未指定时使用宽泛版本；
-- `z.infer<Input>` 把 schema 类型转成解析成功后的 JavaScript 值类型；
-- `Output` 进入 `ToolResult<Output>.data`；
-- `P` 进入进度回调；
-- `Promise<...>` 表示 call 异步完成，Promise 机制本身在 M02 讲透；
-- `readonly inputSchema` 阻止通过 Tool 引用重新赋 schema，但不深冻结 schema 内部对象。
-
-泛型的真正价值是把分散位置锁成同一条类型链：
-
-```mermaid
-flowchart LR
-  SCHEMA["Input：Zod object schema"] --> INFER["z.infer<Input>"]
-  INFER --> CALL["call(args)"]
-  INFER --> DESC["description(input)"]
-  INFER --> CAP["并发 / 只读 / 危险 / 权限判断"]
-  CALL --> OUT["Output"]
-  OUT --> RESULT["ToolResult<Output>.data"]
-  P["P：进度数据"] --> CALLBACK["ToolCallProgress<P>"]
-  CALLBACK --> UI["进度渲染和事件"]
-```
-
-如果每个方法自己写一个相似但不同的 input interface，重构工具参数时很容易只改 call、忘记权限检查。泛型让变化沿协议传播。
-
-### schema 与泛型各守一道门
-
-真实工具执行路径在 `services/tools/toolExecution.ts` 对模型提供的 input 调用 `tool.inputSchema.safeParse(input)`。这一步发生在运行时，因为模型返回的是现实数据，不受你的 TypeScript 编译器管理。
-
-解析成功后，内部方法才获得 `z.infer<Input>`。因此正确流程是：
-
-```text
-模型 JSON
--> inputSchema.safeParse
--> 类型化 input
--> 能力与权限判断
--> call(input)
--> ToolResult<Output>
-```
-
-“已经有泛型，所以不用 schema”和“已经有 schema，所以内部不用泛型”都只守住了一半。
-
-### `Tools = readonly Tool[]` 没有承诺深不可变
-
-`readonly Tool[]` 让消费方不能 `push()`、`pop()` 或改索引，但元素本身仍是对象。若 Tool 的内部字段可变，readonly 数组不会冻结它们。生成 JavaScript 后，这个 readonly 也不会自动调用 `Object.freeze()`。
-
-Java 可以把它近似理解为“接口只暴露不可修改的 List 视图”，但也要警惕：Java 的 `List.copyOf()` 有运行时不可修改行为，TypeScript 的 readonly 主要是编译器约束，不完全等价。
-
-## 七、默认能力怎么补齐，类型和运行对象又怎么对上？
-
-真实 Tool 有很多必需能力，但工具作者不应反复写相同默认方法。源码定义 `ToolDef`：
-
-```ts
-type DefaultableToolKeys =
-  | 'isEnabled'
-  | 'isConcurrencySafe'
-  | 'isReadOnly'
-  | 'isDestructive'
-  | 'checkPermissions'
-  | 'toAutoClassifierInput'
-  | 'userFacingName'
-
-export type ToolDef<Input, Output, P> =
-  Omit<Tool<Input, Output, P>, DefaultableToolKeys> &
-  Partial<Pick<Tool<Input, Output, P>, DefaultableToolKeys>>
-```
-
-把工具类型看作一张字段表：
-
-- `Pick<T, K>` 只取指定键；
-- `Partial<T>` 把这些键变为可选；
-- `Omit<T, K>` 取剩余键；
-- `&` 是交叉类型，要求同时满足两侧。
-
-所以 ToolDef 的语义是：非默认键仍必需，默认键在定义时可省略。
-
-`BuiltTool<D>` 再用映射类型描述默认值填充后的返回形状，运行时的 `buildTool()` 执行：
-
-```ts
-return {
-  ...TOOL_DEFAULTS,
-  userFacingName: () => def.name,
-  ...def,
-} as BuiltTool<D>
-```
-
-后面的 `...def` 会覆盖前面的默认值，这是 JavaScript 对象展开的运行顺序。结尾的 `as BuiltTool<D>` 是信任点：作者声称运行对象符合复杂条件类型，但 `as` 本身不验证对象。
-
-```mermaid
-flowchart TD
-  DEF["ToolDef：默认键可省略"] --> STATIC["BuiltTool<D>：描述合并后类型"]
-  DEFAULTS["TOOL_DEFAULTS：运行对象"] --> SPREAD["{ ...defaults, ...def }"]
-  DEF --> SPREAD
-  SPREAD --> ASSERT["as BuiltTool<D> 信任点"]
-  STATIC --> ASSERT
-  ASSERT --> TOOL["调用方看见完整 Tool"]
-```
-
-源码注释说 60 多个工具通过零错误 typecheck，这是作者提供的工程说明；当前快照缺构建元数据和若干类型文件，我们无法独立运行原项目 typecheck，所以不能把这句注释写成“本课程已验证”。准确的阅读方式是：理解意图，标出断言边界，再用可构建实验验证迁移后的契约。
-
-## 八、关键类型文件缺失了，还能不能严谨分析源码？
-
-> **这是源码面试的加分点：** 真正成熟的回答不是把缺失接口补得像真的一样，而是主动缩小结论，只保留证据能支持的最小契约。
-
-当前快照有 1902 个源文件，却实际缺少 `src/types/message.ts`、`src/types/utils.ts` 和 `src/types/tools.ts`。许多文件仍保留 type-only import：
-
-```ts
-import type {
-  AssistantMessage,
-  Message,
-  ProgressMessage,
-  UserMessage,
-} from '../types/message.js'
-```
-
-`import type` 会在编译后被擦除，运行 bundle 不需要保留这个模块的 JavaScript 值，因此 source map 快照可能缺少纯类型源。这里不能靠记忆补一个 Message 定义，也不能声称“完整源码已经证明联合只有五种”。
-
-我们仍然可以做有边界的重建。
-
-### 从生产者看构造形状
-
-`utils/messages.ts` 可见：
-
-- `createAssistantMessage()` 最终构造 `type: 'assistant'`；
-- `createUserMessage()` 构造 `type: 'user'`；
-- `createProgressMessage()` 构造 `type: 'progress'`。
-
-这证明这些函数的产物确实使用这些判别值，也证明部分字段如何生成。它不证明 Message 没有其他生产者。
-
-### 从消费者看分支需求
-
-`normalizeMessages()` 对 `assistant/attachment/progress/system/user` 分支。`components/Message.tsx` 的渲染 Props 是更窄、更接近 UI 的联合，并处理 `attachment/assistant/user/system/grouped_tool_use/collapsed_read_search`；进度消息作为另外的 lookup 输入传入。
-
-这揭示另一个重要设计：同一系统不一定只有一个“宇宙 Message”。流水线的不同阶段可以使用不同联合视图：持久化消息、正规化消息、渲染消息和 SDK 事件不必完全相同。
-
-### 从 guard 看决定性字段
-
-类型谓词反复使用 `message.type === ...`，说明 `type` 是可见消费者的决定性判别字段。内层 content block 又有自己的 `content.type`，例如 `text`、`tool_use`、`tool_result`。不要把外层 message type 与内层 block type 混成一层。
-
-```mermaid
-flowchart TD
-  MISSING["缺失的 types/message.ts"] --> LIMIT["不补造完整声明"]
-  PRODUCER["生产者：createUser / createAssistant / createProgress"] --> MIN["确认最小构造事实"]
-  CONSUMER["消费者：normalizeMessages / Message.tsx"] --> MIN
-  GUARD["谓词：message.type 分支"] --> MIN
-  MIN --> CLAIM["只写可见路径支持的结论"]
-  LIMIT --> CLAIM
-  CLAIM --> UNKNOWN["完整成员、全部可选字段、DeepImmutable 递归语义仍未知"]
-```
-
-这是源码研究能力的一部分：证据不足时缩小结论，比用一个看似完整的接口填空更可靠。
-
-## 九、结构类型为什么既省事，又容易串领域？
-
-真实源码同时使用 `type` 和少量 `interface`。对本章需要，先掌握最小区别：
-
-- `type` 能直接表达联合、交叉、映射和条件类型；
-- `interface` 很适合描述可扩展对象契约；
-- TypeScript 默认是结构类型：只要对象拥有所需字段，通常不要求显式 `implements` 或共同父类。
+你还不能解释：
+
+- 失败后消息留在哪里；
+- 下一轮能看到什么；
+- 哪个字段跨 turn 保留；
+- 哪些状态只属于当前调用；
+- 并发时谁会发生竞争。
 
 例如：
 
 ```ts
-interface Tool<I, O> {
-  name: string
-  execute(input: I): Promise<O>
-}
-
-const weather = {
-  name: 'weather',
-  async execute(input: { city: string }) {
-    return { temperatureC: 31 }
-  },
-}
+this.mutableMessages.push(...messagesFromUserInput)
+const messages = [...this.mutableMessages]
 ```
 
-`weather` 可以在结构兼容时被当作 Tool 使用，即使没有 `implements Tool`。这与 Java 的 nominal typing 不同：Java 通常要求类显式实现接口。
+这两行创建了两个不同层次：
 
-结构类型降低适配成本，也带来边界风险：两个领域对象碰巧字段相同，可能被认为兼容。稳定 ID、品牌类型、模块封装和运行 schema 都可以在需要时加强领域区分。
-
-## 十、别只看懂：亲手把三层边界拆坏一次
-
-实验目录：
-
-```text
-curriculum/units/M01/code/typescript
-curriculum/units/M01/code/python
-```
-
-TypeScript 先运行行为测试和 demo：
-
-```powershell
-cd "D:\agent\Claude code最新\curriculum\units\M01\code\typescript"
-node --experimental-strip-types contracts.test.ts
-node --experimental-strip-types demo.ts
-```
-
-预期：4 个行为测试通过，demo 显示 user 消息、结构化天气输出和 `completed` 终态。
-
-再单独运行编译器：
-
-```powershell
-npx -y -p typescript tsc --project tsconfig.json
-```
-
-为什么分成两条命令？Node 24 的 `--experimental-strip-types` 会擦掉可擦除类型后运行代码，它不是完整 `tsc`。运行成功不能证明静态错误不存在。`tsconfig.json` 开启 `strict` 与 `noEmit`，只检查不生成文件。
-
-`typecheck.ts` 有两个 `@ts-expect-error`。这个注释不是忽略错误：它要求下一行必须真的有 TypeScript 错误。若错误消失，`tsc` 会报告“Unused @ts-expect-error”。因此它适合验证“这段非法代码仍被拒绝”。
-
-### 为什么实验有两个 Tool 执行入口
-
-`executeTypedTool()` 用于已经在内部类型化的 input：
-
-```ts
-export function executeTypedTool<Input, Output>(
-  tool: Tool<Input, Output>,
-  input: NoInfer<Input>,
-): Promise<Output>
-```
-
-`NoInfer<Input>` 阻止错误的 input 反过来参与推断 Input，类型来源由 Tool 契约决定。`executeTool()` 则故意接收 `unknown`，先调用 `validateInput()`，再进入 execute。
+- `mutableMessages`：长期 owner store；
+- `messages`：当前 turn 的浅快照容器。
 
 ```mermaid
 flowchart LR
-  INTERNAL["内部已验证 input"] --> TYPED["executeTypedTool + NoInfer"]
-  TYPED --> CALL["tool.execute(Input)"]
-
-  EXTERNAL["模型 / JSON 的 unknown"] --> RUNTIME["executeTool"]
-  RUNTIME --> CHECK{"validateInput"}
-  CHECK -->|"失败"| ERR["拒绝"]
-  CHECK -->|"成功并收窄"| CALL
+  STORE["mutableMessages 容器"] --> A["message A"]
+  STORE --> B["message B"]
+  VIEW["messages 浅快照容器"] --> A
+  VIEW --> B
+  STORE -->|"后续 push"| C["message C"]
 ```
 
-第一版实验曾让同一个泛型参数同时从 Tool 和 raw input 推断，结果错误输入可能参与推宽，预期的编译错误没有出现。修复不是加 `as`，而是把内部静态入口和外部运行入口分开。这就是类型设计改变 API 语义的实例。
+两个数组容器分离，但原有元素对象仍可能共享引用。
 
-### Python 为什么需要同一套运行校验
+看到复制时，要问：
 
-运行：
+- 新容器还是深拷贝？
+- 后续 push 改的是哪个数组？
+- 元素是否可能原地修改？
+- Query 收到的是长期 store，还是某一时刻的请求投影？
 
-```powershell
-cd "D:\agent\Claude code最新\curriculum\units\M01\code\python"
-python -m unittest -v test_contracts.py
-python demo.py
+## 5. 调用发生，不等于状态已经更新
+
+即使已经进入 `query()`，每个 event 还要经过 QueryEngine 的消费分支。
+
+不同类型可能：
+
+- 追加长期消息；
+- 写 Transcript；
+- 更新 usage；
+- 只向 SDK yield；
+- 触发结构化输出；
+- 作为控制信号被跳过。
+
+所以完整描述不是：
+
+```text
+query 返回消息
 ```
 
-Python 版用 `Literal`、联合、dataclass 和 Generic Protocol 表达静态意图，但默认 Python 解释器不会执行 type hint。`parse_message()` 和 `WeatherTool.validate_input()` 才是运行边界。
+而是：
 
-本单元没有运行 mypy 或 pyright，所以不能声称 Python 静态检查已通过。4/4 `unittest` 只证明运行行为。
+```text
+query 产生事件
+-> consumer 按类型分支
+-> 修改特定 owner
+-> 选择是否持久化
+-> 选择是否对外输出
+```
 
-### 做四次有目的的破坏
+## 6. 失败不是自动事务回滚
 
-不要只看绿色测试。
+如果事件先被消费并写入状态，下一次迭代才失败，前面的 mutation 仍可能保留。
 
-1. 在 TypeScript `HarnessMessage` 新增一个 `attachment` 变体，不修改 `summarizeMessage()`。运行 `tsc`，观察 `assertNever(message)` 是否报错。这验证穷尽分支。
-2. 把 `parseMessage()` 改成 `return value as HarnessMessage`。再运行错误 JSON 测试，若错误输入通过，说明断言不是验证。
-3. 从 `ALLOWED_TRANSITIONS.completed` 加入 `running`。测试会变红，说明 transition table 才拥有迁移语义。
-4. 删除 `executeTool()` 的 validator，直接断言 input。传 `{ city: 42 }`，观察错误进入工具内部还是在边界被拒绝。
+追踪异常路径时，要逐项寻找：
 
-每次破坏都要先写预测，再运行。若现象与预测不一致，优先修正心智模型，不要先改断言让测试变绿。
+- rollback；
+- compensation；
+- retry；
+- missing tool result 修复；
+- checkpoint；
+- append-only failure boundary。
 
-## 十一、学完不能只会讲：把契约真正合进 Mini Agent Harness
+如果源码没有这些机制，就不能因为最外层请求失败而假定内部状态恢复到了调用前。
 
-本单元合入的不是 Claude Code 私有类型副本，而是四条行为契约：
+## 7. Graph、测试和 Trace 各自回答不同问题
+
+| 工具 | 主要回答 |
+| --- | --- |
+| AST / Graphify / IDE | 哪些结构可能相关 |
+| 源码回读 | 代码在什么条件下做什么 |
+| 契约测试 | 给定输入必须满足哪些不变量 |
+| Runtime Trace | 这一次运行实际发生了什么 |
+
+不要让它们互相冒充：
+
+- 静态图不能直接代表生产调用率；
+- 一次 Trace 不能代表所有分支；
+- clean-room 实验不能冒充原项目官方测试；
+- 注释描述的未来愿景不能冒充当前调用路径。
+
+最有价值的测试往往不是“最终有两条消息”，而是记录过程：
+
+```text
+call.entered
+state.mutated(owner=conversation, field=messages)
+view.snapshotted
+branch.skipped(reason=local_command)
+event.yielded(type=assistant)
+call.failed
+```
+
+它让“我看懂了”变成一个可以被反驳的结论。
+
+### 本章小结
+
+第四道缰绳的核心是：
+
+> 先把箭头分类，再讨论箭头代表什么；先找 owner 和 mutation，再讨论失败后留下什么。
+
+---
+
+# 七、把四部分串起来：工业级 Agent Harness 的最小骨架
+
+现在把整篇文章收拢。
+
+一次可靠 Agent 运行至少经过四层治理：
 
 ```mermaid
 flowchart TD
-  RAW["外部输入"] --> PARSER["parseMessage / validateInput"]
-  PARSER --> MESSAGE["HarnessMessage 判别联合"]
-  MESSAGE --> LOOP["后续 AgentLoop 消费"]
-  IDLE["RunState.idle"] -->|"transition guard"| RUNNING["running"]
-  RUNNING --> COMPLETED["completed"]
-  RUNNING --> FAILED["failed"]
-  RUNNING --> CANCELLED["cancelled"]
-  TOOL["Tool<Input, Output>"] --> LOOP
+  INPUT["用户目标 / 外部数据"] --> CONTRACT["契约层：类型 + schema + transition"]
+  CONTRACT --> PROCESS["过程层：event stream + ordering + terminal"]
+  PROCESS --> RESOURCE["资源层：cancel + timeout + owner + cleanup"]
+  RESOURCE --> EVIDENCE["证据层：trace + transcript + contract test"]
+  EVIDENCE --> RECOVER["恢复、审计和下一轮"]
 ```
 
-当前 H0 故意比真实快照小：
+## 1. 契约层：什么可以进入系统
 
-- `kind` 而不是 `type`，避免让学习实现冒充 Claude Code Message；
-- 四种消息只是课程当前需要的领域，不宣称覆盖真实联合；
-- Tool 暂时没有进度、权限和并发能力，这些在对应单元演进；
-- RunState 有集中 transition table，这是设计迁移，不是对 `Task.ts` 的复制；
-- validator 是手写教学实现，后续可以替换为 Zod、Valibot、JSON Schema 或企业 schema registry。
+它负责：
 
-后续每新增一种消息或状态，都要回答：谁能构造、谁能消费、运行时从哪里验证、旧数据怎样迁移、终态能否恢复。H0 是这些问题的第一个可运行骨架。
+- 消息和工具输入的运行时校验；
+- 内部判别联合与泛型传播；
+- 状态合法值与迁移规则；
+- 旧版本数据迁移；
+- 权限和安全属性。
 
-## 十二、换成 Java、Spring、Python，这套边界还成立吗？
+核心原则：
 
-### Java sealed hierarchy 对应判别联合
+> 外部一律先当 `unknown`，验证后再进入领域。
 
-Java 17+ 可以写：
+## 2. 过程层：运行中发生了什么
 
-```java
-sealed interface HarnessMessage
-    permits UserMessage, AssistantMessage, ProgressMessage, SystemMessage {}
+它负责：
+
+- 模型 delta；
+- assistant 与 user 消息；
+- 工具进度与结果；
+- completion、error 和 cancellation；
+- 事件顺序与缓冲策略；
+- 单写者消费和多订阅者 fan-out。
+
+核心原则：
+
+> 先设计事件协议，再选择 AsyncGenerator、Flux、SSE 或消息队列。
+
+## 3. 资源层：谁持有现实世界的工作
+
+它负责：
+
+- HTTP request；
+- Node Readable；
+- child process；
+- timer 和 listener；
+- 临时文件；
+- background task；
+- shutdown budget。
+
+核心原则：
+
+> 每个资源必须有唯一 owner；取消必须从意图传播到动作，再到确认。
+
+## 4. 证据层：怎样知道系统真的如此运行
+
+它负责：
+
+- Transcript；
+- TraceEvent；
+- state mutation；
+- runtime span；
+- 契约测试；
+- 失败注入；
+- 源码位置与版本边界。
+
+核心原则：
+
+> 静态关系、运行事实、测试不变量和设计推断必须分开标记。
+
+## 5. 一个可迁移到企业项目的最小结构
+
+```text
+AgentRun
+├── ConversationState       # 长期消息与 checkpoint
+├── RequestProjection       # 当前轮发给模型的视图
+├── EventDispatcher         # 唯一消费模型/工具事件
+├── ToolRegistry            # schema、权限、并发与执行
+├── CancellationScope       # one-shot reason 与 deadline
+├── ResourceScope           # 模型流、子进程、timer、listener
+├── TransitionService       # 运行状态合法迁移
+├── TranscriptStore         # 可恢复的持久记录
+└── TraceSink               # 不阻断主流程的结构化观测
 ```
 
-记录类型可以携带变体字段，pattern switch 可以做接近 TypeScript 的穷尽检查。区别是 Java 以 nominal hierarchy 为主，类必须显式加入 permits/implements；TypeScript 以对象结构和字面量字段收窄。
-
-对于外部 JSON，Jackson 反序列化配置和 Bean Validation 才是运行边界。Java 类型存在于 class metadata，不代表任意 JSON 已被安全解析；同样不能省略 schema 和错误处理。
-
-### Spring 中不要让 DTO 直接成为领域状态
-
-一个稳健边界是：
+对 Spring / Java 项目，可以映射为：
 
 ```text
 Controller DTO
--> Bean Validation / JSON schema
--> mapper
--> sealed domain message
--> transition service
--> repository conditional write
+-> Bean Validation / JSON Schema
+-> AgentRunService
+-> Flux<AgentEvent>
+-> ToolExecutor / ProcessAdapter
+-> RunStateRepository(CAS / transaction)
+-> Transcript + OpenTelemetry
 ```
 
-DTO 适配协议，领域对象表达内部不变量，transition service 表达合法边。若多个实例并发修改状态，仅靠进程内 transition table 不够，还需要版本号、compare-and-set、事务或事件序列。
+对 LangGraph 项目，要额外回答：
 
-### Python 的 TypedDict/Pydantic/dataclass 各有角色
+- State 里保存外部 DTO 还是领域对象？
+- reducer 是否保持不变量？
+- conditional edge 本次是否真的走过？
+- 节点内部启动的资源由谁持有？
+- graph cancel 怎样到达模型、工具和子进程？
+- checkpoint 在哪一个事件后提交？
 
-- `TypedDict`/`Literal`：帮助 mypy/pyright 理解字典结构；
-- Pydantic：运行时解析和错误报告；
-- dataclass：内部领域对象；
-- transition function：状态迁移。
+框架提供容器，不替你定义这些答案。
 
-把 Pydantic model 直接在所有层传递很方便，但会把外部协议、持久化形状和内部领域绑在一起。是否分层取决于变更频率和风险，不是为了形式统一。
+---
 
-## 十三、到了 LangGraph 和企业 Agent，框架会替你守住这些边界吗？
+# 八、三个最值得亲手做的实验
 
-LangGraph 的 State schema 能描述图节点共享的状态形状，条件边能表达部分迁移。但你仍要决定：
+原四章包含大量 clean-room 实验。对初学者来说，不需要一次做完所有实验。下面三个实验足以建立最关键的直觉。
 
-- State 中保存的是外部 DTO、领域消息还是请求投影？
-- tool node 接受的参数是否经过运行校验？
-- checkpoint 恢复旧 schema 时怎样迁移？
-- 新增消息变体后，哪些节点必须更新？
-- 并发节点写同一字段时，reducer 是否保持领域不变量？
+## 实验一：类型断言不是运行时校验
 
-框架提供状态和边的容器，不替你定义领域。
+目标：观察错误 Tool input 怎样越过错误边界。
 
-企业级实现还需要四项本章直接推出的治理：
+先写安全版本：
 
-- **Schema 版本**：消息、Tool input/output 和 checkpoint 带版本，迁移发生在当前 schema 校验前且有明确范围。
-- **边界观测**：记录 validation failure 的类型、来源和版本，但避免把敏感 payload 全量写日志。
-- **兼容发布**：新增联合变体先升级宽容消费者，再升级生产者；删除字段按双读双写或版本转换推进。
-- **契约测试**：Provider adapter、Tool registry、消息存储和恢复路径共用 schema fixtures，避免每层各自理解同名类型。
+```ts
+type WeatherInput = { city: string }
 
-## 十四、面试官继续深挖：怎样把“类型题”答成工业级 Agent 设计题？
+function parseWeatherInput(value: unknown): WeatherInput {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as Record<string, unknown>).city !== 'string'
+  ) {
+    throw new Error('invalid weather input')
+  }
 
-本单元最有价值的不是背 TypeScript 术语，而是能把静态设计与 Agent 运行风险连起来。下面 6 道题覆盖大厂 Agent 开发岗位最可能从本章展开的追问。
+  return value as WeatherInput
+}
+```
 
-### 问题 1：为什么说 Agent 系统里的 TypeScript 类型不是注释，但又不能依赖类型保证运行安全？
+测试：
+
+```ts
+parseWeatherInput({ city: 'Beijing' }) // 通过
+parseWeatherInput({ city: 42 })        // 拒绝
+```
+
+然后破坏它：
+
+```ts
+function parseWeatherInput(value: unknown): WeatherInput {
+  return value as WeatherInput
+}
+```
+
+再次传入 `{ city: 42 }`。
+
+你会看到：`as` 没有执行任何验证，只是让编译器停止怀疑。
+
+**你应该得到的结论：**
+
+```text
+类型断言改变编译器视角，不改变现实数据。
+```
+
+## 实验二：流关闭不等于外部资源关闭
+
+```ts
+async function* stream(trace: string[]) {
+  const timer = setInterval(() => trace.push('timer.tick'), 10)
+
+  try {
+    yield 'first'
+    yield 'second'
+  } finally {
+    trace.push('generator.finally')
+    // 故意不 clearInterval(timer)
+  }
+}
+```
+
+消费者读取第一个事件后 `break`：
+
+```ts
+for await (const event of stream(trace)) {
+  console.log(event)
+  break
+}
+```
+
+你会看到 `generator.finally` 执行，但 timer 仍然继续产生 tick。
+
+然后在 `finally` 中加入：
+
+```ts
+clearInterval(timer)
+```
+
+**你应该得到的结论：**
+
+```text
+生成器退出只是控制流事实；外部资源是否停止取决于显式 disposer。
+```
+
+## 实验三：证明“不调用”比证明“存在调用点”更难
+
+写一个可计数 fake：
+
+```ts
+let queryCalls = 0
+
+async function processInput(prompt: string) {
+  return {
+    messages: [{ type: 'user', content: prompt }],
+    shouldQuery: !prompt.startsWith('/'),
+  }
+}
+
+async function submitMessage(prompt: string) {
+  const processed = await processInput(prompt)
+
+  if (!processed.shouldQuery) {
+    return 'local result'
+  }
+
+  queryCalls += 1
+  return 'model result'
+}
+```
+
+运行：
+
+```ts
+await submitMessage('/help')
+console.assert(queryCalls === 0)
+
+await submitMessage('fix bug')
+console.assert(queryCalls === 1)
+```
+
+**你应该得到的结论：**
+
+```text
+源码中有调用点，只能证明“可能调用”；
+执行完整分支并观察计数，才能证明某个输入“没有调用”。
+```
+
+## 实验报告统一写四句话
+
+每次实验都不要只写“测试通过”。固定回答：
+
+1. 我原来预测什么？
+2. 实际观察到什么？
+3. 它证明了什么？
+4. 它没有证明什么？
+
+这是从“会跑代码”走向“会做源码研究”的关键一步。
+
+---
+
+# 九、资深 Agent 开发岗高频面试题
+
+下面的问题不再按原四章分组，而是按面试中的逻辑递进组织：先讲整体，再讲契约、事件、资源和证据。
+
+## 问题 1：Claude Code 为什么不只是一个调用大模型的聊天程序？
 
 **参考口语回答（约 2 分钟）：**
 
-> 先说结论：TypeScript 类型是内部组件之间的编译期契约，不是运行时安全边界。它很重要，因为判别联合能限制消息分支，泛型能把 Tool 的 schema、call、result 和 progress 串成一条一致的类型链，`readonly` 能限制谁可以修改集合；但这些类型生成 JavaScript 时会被擦除，模型返回的 tool input、磁盘里的 task JSON、SDK 网络消息都没有经过我们的 `tsc`。Claude Code 的设计也体现了两层：`Tool<Input, Output, P>` 负责内部静态传播，真正执行前还要对 `tool.inputSchema.safeParse(input)`；`utils/tasks.ts` 用 Zod 检查文件数据。再往前一步，字符串联合只说明 status 值合法，`isTerminalTaskStatus()` 也只分类终态，不定义迁移。所以生产 Harness 我会分成 type、runtime schema、transition policy 三道门，任何 `as Message` 都不能替代验证。
+> Claude Code 的本质是一个工业级 Agent Harness。模型负责观察上下文并决定下一步是回复还是调用工具，系统负责把这些决策变成可靠执行。和 ChatBot 最大的区别是，一次任务会经历多轮模型与工具循环，还要维护会话状态、权限、工具输入校验、事件流、子进程、取消、Transcript 和恢复。真正复杂的代码通常不在“调模型”这条 happy path，而在错误参数、部分失败、用户中断、输出过大、资源没有退出和状态如何跨轮保留。我的理解是模型是发动机，Harness 是刹车、方向盘和仪表盘；模型能力决定上限，系统治理决定能不能稳定上线。
 
-### 问题 2：你怎样从一个 discriminated union 读出 Agent 的控制流？
-
-**参考口语回答（约 2 分钟）：**
-
-> 先说结论：我先找稳定的判别字段，再沿生产者、消费者和穷尽检查确认每个变体什么时候出现、谁负责处理。比如 Claude Code 的可见消息代码反复按 `message.type` 分支，`createUserMessage()`、`createAssistantMessage()` 和 `createProgressMessage()` 是生产者，`normalizeMessages()` 和 `Message.tsx` 是不同阶段的消费者。进入 `type === 'assistant'` 分支后，编译器才允许访问 assistant 专属内容；type predicate 可以把这种收窄带进 `findLast()` 之类的高阶函数；`satisfies never` 则让新增联合成员但漏改 switch 变成编译错误。不过我不会只看 case 列表就宣布完整联合，因为当前快照缺 `types/message.ts`，而且渲染联合和持久化联合可能本来就不同。源码阅读要把“当前消费者处理什么”和“全系统只能有什么”分开。
-
-### 问题 3：Claude Code 里为什么会有两个 `TaskStatus`，你会怎样避免企业项目出现同名领域混淆？
+## 问题 2：TypeScript 已经有类型，为什么 Agent 仍然需要 Zod 或 JSON Schema？
 
 **参考口语回答（约 2 分钟）：**
 
-> 先说结论：同名类型不等于同一领域，import path 是契约的一部分。Claude Code 的 `src/Task.ts` 表示运行任务编排，状态是 pending、running、completed、failed、killed，Task 本身更像带 kill 能力的执行器；`src/utils/tasks.ts` 表示协作任务清单，状态是 pending、in_progress、completed，并且通过 Zod 校验磁盘实体。`running` 和 `in_progress` 不能互换，两个 completed 的业务含义也不必完全一致。我在企业项目里会先按 bounded context 命名，比如 RuntimeTaskStatus 和 WorkItemStatus，放进不同模块，API DTO 也不直接复用领域类型。如果确实需要映射，就写显式 mapper 和契约测试，不靠字符串相同自动转换。这样将来一个领域增加 cancelled，另一个增加 blocked，不会误伤彼此。
+> TypeScript 类型是内部代码的编译期契约，不是运行时安全边界。模型返回的 tool input、磁盘 JSON、MCP payload 和网络消息都没有经过我们的 `tsc`，所以进入系统时必须先当作 `unknown`，通过 Zod、JSON Schema 或手写 parser 校验。校验成功后，泛型和判别联合再保证内部调用的一致性。Claude Code 的 Tool 设计就是这两层：Input schema 既能在运行时 safeParse，又通过 infer 约束 call、只读、并发和权限逻辑。再往后还有第三层，状态值合法不代表迁移合法，例如 completed 和 running 都合法，但 completed 不能随便回 running，所以还要 transition policy。
 
-### 问题 4：`Tool<Input, Output, P>` 这种泛型设计解决了什么，运行时为什么还需要 schema？
-
-**参考口语回答（约 2 分钟）：**
-
-> 先说结论：泛型解决内部一致性传播，schema 解决外部数据真实性，二者缺一不可。Claude Code 的 Input 不是只给 `call()` 用，它通过 `z.infer<Input>` 同时约束 description、并发安全、只读、危险判断和权限路径；Output 进入 `ToolResult<Output>` 和渲染；P 约束进度回调。这样工具参数变更会在所有消费点暴露编译错误。但模型给出的 JSON 没有经过这个编译器，所以执行边界仍要 `inputSchema.safeParse()`，成功后才得到内部 Input。我的 Harness 会把 Provider payload 先当 unknown，校验失败返回结构化 tool error，校验成功再进入泛型化 executor。对于副作用工具，schema 之后还要权限、幂等和审计，类型正确不代表操作被授权。
-
-### 问题 5：字符串联合已经限制了状态值，为什么还要状态机或 transition guard？
+## 问题 3：为什么说同名类型不一定是同一个领域？
 
 **参考口语回答（约 2 分钟）：**
 
-> 先说结论：值域约束回答“这个值是否合法”，状态机回答“从当前值到这个值是否合法”，是两个问题。`Task.ts` 的 TaskStatus 能拒绝 sleeping，但 completed 和 running 都各自合法，所以类型本身阻止不了 completed 再回 running；`isTerminalTaskStatus()` 只是告诉消费者哪些是终态，也不会自动拦截写入。生产 Harness 里我会把 RunState 做成带载荷的判别联合，再由 transition service 定义合法边；单机内存可以查表，数据库里要用 version 或条件更新防并发竞争，分布式场景还要处理重复事件和恢复。测试除了覆盖每个状态，还要覆盖非法边不产生副作用。这样取消、失败和恢复语义才不会散落在多个 if 里。
+> 类型名只是导航线索，import path、生产者、消费者和运行校验才决定语义。Claude Code 快照里就有两套 TaskStatus：`src/Task.ts` 表示运行任务，包含 running、failed、killed；`src/utils/tasks.ts` 表示协作任务清单，包含 in_progress，并通过 Zod 校验持久文件。两个 completed 也不一定有同样业务含义。我在企业项目里会按 bounded context 命名成 RuntimeTaskStatus 和 WorkItemStatus，跨领域转换用显式 mapper 和契约测试，绝不因为字符串相同直接 cast。这样一个领域新增 cancelled、另一个新增 blocked 时不会互相污染。
 
-### 问题 6：源码快照缺少关键类型文件时，你怎样保证教材或设计结论可信？
+## 问题 4：Agent Query 为什么更适合事件流，而不是 `Promise<FinalAnswer>`？
 
 **参考口语回答（约 2 分钟）：**
 
-> 先说结论：缺失声明时可以重建最小可证契约，但不能补造完整类型。我会做三角核验：先找 producer 看对象实际怎样构造，再找 consumer 看按哪些字段分支，最后找 runtime validator 看外部输入怎样进入；三者交集是可以写入教材的事实。Claude Code 当前快照里 `types/message.ts` 缺失，但可见的 createUser、createAssistant、createProgress，加上 normalizeMessages 和 Message.tsx，足以确认若干 `type` 判别和阶段性联合；它们不足以证明完整成员、所有可选字段或 DeepImmutable 的递归定义。我会把结论标成快照事实和无法确认项，再用 clean-room 代码验证迁移后的行为，而不会声称原项目 typecheck 通过。这种证据纪律也适用于闭源 SDK、反编译包和版本不完整的企业系统。
+> 因为一次 Agent 运行不是一个延迟返回值，而是一段需要持续观察和控制的过程。中间会产生模型 delta、assistant 消息、工具进度、权限请求、tool result、usage 和控制事件。Claude Code 用 async generator 逐个 yield，QueryEngine 用 for-await 边消费边更新 mutableMessages、Transcript、usage 和 SDK 输出，因此用户不需要等整轮结束。Promise 适合一次完成，AsyncIterable 适合多次事件。不过使用 AsyncIterable 不代表自动有背压和取消；生产系统仍要规定 queue 上限、慢消费者策略、early-close 后怎样连接 AbortSignal 和资源 disposer。
 
-面试时先讲机制结论，面试官追问证据再给路径和符号。不要一上来背 `Pick`、`Omit` 的定义；要解释这些类型操作怎样改变 Tool 作者与调用方的责任。
+## 问题 5：`yield*` 和 `for await...of` 的本质区别是什么？
 
-## 十五、关掉答案：你能不能独立走完一次证据闭环？
+**参考口语回答（约 2 分钟）：**
 
-关掉正文，自己完成以下任务：
+> `yield*` 是生成器之间的委托，既能把子生成器 yield 的事件原样转发，也能在子生成器正常 return 时拿到终值。`for await` 是消费者语法，只逐个消费 yielded values，循环结束后没有位置接 generator return value。Claude Code 的 `query()` 用 `const terminal = yield* queryLoop(...)`，因此既转发事件又取得 Terminal；QueryEngine 用 for-await，关心每条事件带来的状态副作用，再根据自己观察到的 stop reason 收敛 SDK result。工程上要把 event protocol 和 terminal protocol 分开设计，跨语言时最好把关键 completion 做成显式 event。
 
-先画三层约束图，分别放入 `TaskStatus`、`TaskStatusSchema.safeParse()` 和 `transitionRunState()`。如果把三者放在同一层，重新解释它们各自何时执行。
+## 问题 6：用了 AsyncIterable，为什么仍然可能 OOM？
 
-然后从 `src/Tool.ts:Tool` 出发，沿 Input、Output、P 三条线各定位至少两个消费点；再到 `toolExecution.ts` 找运行时 input 校验。用一句话解释为什么泛型和 schema 都保留。
+**参考口语回答（约 2 分钟）：**
 
-接着对比 `src/Task.ts` 与 `src/utils/tasks.ts`，写出两个完整限定名称、状态值域和实体职责。尝试把一个领域状态直接映射到另一个，列出会丢失的语义。
+> AsyncIterable 只定义消费者怎样异步取值，不约束生产者是否提前把值塞进数组。一个 push-to-pull adapter 可以对外暴露 `.next()`，内部却是无界 queue；StreamingToolExecutor 也可能缓存 progress 和 result。如果生产速度长期高于消费速度，仍然会 OOM。我的设计会按事件语义分层：token delta 可以合并，progress 可以只保留最新值，tool result 和 permission request 要可靠交付；dispatcher 唯一消费上游，再为各 subscriber 建独立有界队列，监控 queue depth 和 lag，达到阈值时阻塞、降采样或断开非关键消费者。
 
-运行双语言测试与 TypeScript typecheck，完成至少一次破坏。把“预期、实际、证明了什么、没有证明什么”写成四句话。
+## 问题 7：AbortSignal 触发是否等于子进程已经退出？
 
-最后为自己的 RAG 或 Agent 项目选一个外部边界，例如检索结果、Tool input、checkpoint 或队列事件。画出 `unknown -> runtime schema -> domain union -> transition`，并说明每一层的 owner。
+**参考口语回答（约 2 分钟）：**
 
-## 写在最后：这一章真正值得带走的四个设计哲学
+> 不等于。AbortSignal 只是一份 one-shot 取消通知和 reason，真正的资源动作要由 owner 的 listener 完成。模型请求要 abort HTTP，子进程要 terminate 或 tree-kill，Readable 要 destroy，timer 要 clear。即使 kill 请求已经发出，也还要区分 TerminationSent 和 ExitConfirmed；有些实现会为了快速收敛先 resolve 逻辑结果，并不保证 OS 已经报告 exit。我的 Harness 会把 CancelRequested、TerminationSent、ExitConfirmed 和 CleanupFinished 分成事件，超过 deadline 未确认就升级强杀或隔离，资源配额和工作目录在强确认前不复用。
 
-一、**类型不是注释，但类型也不是防火墙。** 它约束内部代码的承诺，却不会替你检查模型、磁盘和网络送来的现实数据。
+## 问题 8：timeout、cancel、kill 和 background 有什么区别？
 
-二、**同名不等于同域，import path 本身就是语义。** 工业系统里最危险的错误之一，就是因为字符串和值长得一样，便省掉显式映射。
+**参考口语回答（约 2 分钟）：**
 
-三、**外部输入永远先按 `unknown` 对待。** 先迁移、再 schema 校验、再进入领域联合；任何 `as Message` 都只能移动编译器视线，不能改变真实数据。
+> timeout 是预算事件，cancel 是终止意图，kill 是资源动作，background 是所有权转移，不能共用一个 cancelled boolean。Claude Code 的长 Bash 命令超时后可能转后台继续运行；某些 interrupt reason 也不会立刻 kill，而是让后台任务接管。background 后必须有 durable owner、输出限制和完成通知。生产设计里我会分开建模 deadline、cancel reason、execution mode、ownerId 和 exit confirmation。这样服务恢复时才能知道任务是被终止了、还在后台跑，还是只是不再由前台等待。
 
-四、**合法值不等于合法变化。** 联合类型定义值域，transition policy 定义边，数据库条件写和幂等机制再保证并发环境里的真实迁移。
+## 问题 9：看到 A import 了 B，能不能说一次请求一定调用了 B？
 
-面试现场记住一句话就够了：**type 管内部承诺，schema 管外部事实，state machine 管此刻能不能变。**
+**参考口语回答（约 2 分钟）：**
 
-## 附录：源码定位地图
+> 不能。import 只证明模块绑定或类型可见，真实调用要找到 call site，还要向上找 guard 和 caller。Claude Code 的 QueryEngine 确实 import 并调用 query，但 submitMessage 前面有 processUserInput 返回的 shouldQuery；本地 slash command 可以直接返回，一次都不进入模型 Query。即使到达 call site，还要向下追 event 怎样修改 owner。我的源码追踪方法是：先提出可证伪问题，用图工具找候选，再回源码找调用点、条件、参数、状态 owner、失败路径，最后用可计数 fake 或 runtime trace 验证特定输入。
 
-行号只作当前快照辅助，优先按符号搜索：
+## 问题 10：Agent 流中途失败，怎样判断哪些状态需要补偿？
 
-- `src/Task.ts` -> `TaskType`、`TaskStatus`、`isTerminalTaskStatus`、`TaskStateBase`、`Task` -> 运行任务值域与终态谓词 -> 约 6–78 行。
-- `src/utils/tasks.ts` -> `TASK_STATUSES`、`TaskStatusSchema`、`TaskSchema` -> 协作任务运行 schema -> 约 69–90 行。
-- `src/utils/tasks.ts` -> `getTask` 的 `USER_TYPE === 'ant'` 分支 -> schema 前条件迁移 -> 约 319–332 行。
-- `src/Tool.ts` -> `ToolResult`、`Tool`、`Tools` -> Input/Output/P 类型链与只读集合 -> 约 321、362、701 行。
-- `src/Tool.ts` -> `ToolDef`、`BuiltTool`、`buildTool` -> 默认方法的静态/运行合并与断言信任点 -> 约 721–792 行。
-- `src/utils/messages.ts` -> `createAssistantMessage`、`createUserMessage`、`createProgressMessage` -> 可见消息生产者 -> 约 355–611 行。
-- `src/utils/messages.ts` -> `normalizeMessages` -> 按 `message.type` 收窄的消费者 -> 约 732–821 行。
-- `src/utils/messages.ts` -> `getPlanPhase4Section` -> `satisfies never` 穷尽检查 -> 约 3180–3205 行。
-- `src/components/Message.tsx` -> `Props.message`、`MessageImpl` -> 更窄渲染联合及分支 -> 约 31–350 行。
-- `src/services/tools/toolExecution.ts` -> `inputSchema.safeParse` -> Tool 外部输入运行校验 -> 约 615 行。
+**参考口语回答（约 2 分钟）：**
 
-证据说明：上述 Claude Code 结论是当前静态快照事实；双语言实验是 clean-room 运行验证；H0 模块边界和企业方案是设计迁移。Graphify 只帮助定位候选，没有作为正文事实或图示证据。
+> 不能把 iterator reject 当成事务回滚，要沿副作用提交点逐个判断。QueryEngine 可能已经消费 assistant event、追加 mutableMessages、写 Transcript、累计 usage，并把部分文本交给用户，下一次迭代才失败；这些状态不会自动撤销。我的设计会区分 EventAccepted、StateCommitted、ExternalEffectConfirmed 和 StreamFailed。内存或数据库中的可逆状态可以补偿，外部 Tool 副作用使用幂等键、outbox 或 Saga，Transcript 保持 append-only 并记录 failure boundary，恢复从最后一个稳定 checkpoint 继续。
+
+## 问题 11：怎样为企业 Agent 设计不会泄漏资源的取消机制？
+
+**参考口语回答（约 2 分钟）：**
+
+> 我会让每个 run 有一个 CancellationScope 和 ResourceScope。CancellationScope 只保存 one-shot reason、source 和 deadline，父级向子级传播；资源 adapter 负责把通知桥接成 abort、destroy、terminate 或 kill。ResourceScope 记录模型流、子进程、timer、listener 和临时文件的 owner 与幂等 disposer。取消时先广播请求，再等待有限确认，超时升级，最后 cleanup。服务 shutdown 还有总体预算，先持久化 checkpoint，再取消核心资源，最后尽力 flush telemetry。`finally` 只是挂接这些动作的位置，不是资源已经退出的证明。
+
+## 问题 12：怎样证明自己的源码结论可信？
+
+**参考口语回答（约 2 分钟）：**
+
+> 我会把证据分成四类：静态图回答可能的结构关系，源码 call site 和 guard 回答代码条件，契约测试回答给定场景必须满足什么，runtime trace 回答这一次实际发生了什么。它们不能互相冒充。比如 Graphify 可以给出 submitMessage 到 query 的候选，也可能把参数里的 tool 误推成执行调用；必须回源码否定假阳性。若原仓库缺测试，我会缩小事实结论，再写 clean-room 实验验证语言或协议假设，并明确它不是官方实现证明。真正可靠的说明同时写“证明了什么”和“没有证明什么”。
+
+---
+
+# 写在最后
+
+把 M01–M04 四个单元揉成一篇以后，你会发现它们其实一直在讲同一件事：
+
+> 一个工业级 Agent，如何把“不完全可靠的推理”变成“可以观察、可以约束、可以恢复的执行”。
+
+这背后有四个很朴素、但值得反复琢磨的设计哲学。
+
+## 一、边界比聪明更重要
+
+模型再强，也不能让外部 JSON 自动变可信，不能让非法状态迁移自动消失，也不能替你判断一次授权能否扩散到下一次操作。
+
+可靠系统先划边界，再谈智能。
+
+## 二、过程比最终答案更重要
+
+用户看到的不是最后一个字符串，而是一段持续发生的工作。消息、进度、权限、错误、取消和恢复都要在过程中留下可处理的事件。
+
+没有过程协议的“流式”，只是把字符提前显示出来。
+
+## 三、取消不是一句 `abort()`
+
+从取消请求，到资源收到动作，到操作系统确认退出，再到 listener 和 timer 清理，是一条完整生命周期。
+
+用户看见“已取消”，系统却留下孤儿进程，是 Agent 平台最危险的假成功之一。
+
+## 四、证据强度必须匹配结论强度
+
+import 只能证明 import，call site 只能证明某条路径可能调用，一次 trace 只能证明一次运行。
+
+源码研究真正的深度，不是画更多箭头，而是知道哪条箭头能支持哪句话，以及什么时候应该诚实地停止推断。
+
+最后用一句话记住这篇教材：
+
+> 类型守住数据，事件守住过程，资源域守住现实工作，证据链守住我们对系统的理解。
+
+当这四道缰绳同时存在，`while (true)` 才不再只是一个 Demo 循环，而真正成为可以上线、可以恢复、可以审计的 Agent 心脏。
+
+---
+
+# 附录：源码定位地图
+
+行号只用于当前静态快照辅助，后续版本优先按符号搜索。
+
+## 契约与类型
+
+- `src/Task.ts`：`TaskType`、`TaskStatus`、`isTerminalTaskStatus`、`TaskStateBase`。
+- `src/utils/tasks.ts`：协作任务 `TaskStatusSchema`、旧数据迁移与文件校验。
+- `src/Tool.ts`：`Tool<Input, Output, P>`、`ToolDef`、`buildTool()`。
+- `src/services/tools/toolExecution.ts`：模型 Tool input 的 `safeParse()` 运行校验。
+- `src/utils/messages.ts`：消息生产者、类型谓词与分支收窄。
+
+## 事件流
+
+- `src/query.ts`：`query()`、`queryLoop()`、`yield*` 与 Terminal。
+- `src/QueryEngine.ts`：`submitMessage()` 中的 `for await` 消费和状态更新。
+- `src/services/api/claude.ts`：流式委托与手动 `.next()` 保留终值的路径。
+- `src/services/tools/StreamingToolExecutor.ts`：progress/results 缓冲与 drain。
+- `src/utils/stream.ts`：单消费者 push-to-pull 队列。
+
+## 运行时资源
+
+- `src/tools/BashTool/BashTool.tsx`：`BashTool.call()` 与 `runShellCommand()`。
+- `src/utils/Shell.ts`：spawn 前装配、输出模式、pre-abort 与 cwd 更新。
+- `src/utils/ShellCommand.ts`：child、timeout、abort、kill、background 和 cleanup。
+- `src/utils/abortController.ts`：父子取消传播。
+- `src/utils/combinedAbortSignal.ts`：多个 signal 与 timeout 合并。
+- `src/utils/cleanupRegistry.ts`：全局 cleanup 注册与执行。
+- `src/utils/gracefulShutdown.ts`：预算化 shutdown 与 failsafe。
+
+## 调用与证据
+
+- `src/QueryEngine.ts`：跨 turn owner、`processUserInput()`、`shouldQuery`、Query 调用和 event switch。
+- `src/utils/processUserInput/processUserInput.ts`：输入适配与 `shouldQuery` 来源。
+- `ask()`：创建 QueryEngine、委托 `submitMessage()` 和 finally 状态交接。
+
+## 证据边界
+
+本文中的 Claude Code 描述来自当前静态源码快照；语言行为与破坏实验属于 clean-room 运行验证；企业 Harness、Spring、Java、LangGraph 和 SLO 设计属于迁移方案。当前快照缺失的纯类型文件、部分测试和构建元数据，没有通过猜测补成“完整官方事实”。

@@ -1,4 +1,51 @@
-# M03 `await` 之后还有运行时：事件循环、Stream、子进程与取消
+# M03 面试官问“用户按 Ctrl+C 后，子进程真的停了吗？”：从 await 扒开事件循环、Stream、取消与资源收敛
+
+<!-- INTERVIEW_LED_STYLE_V1 -->
+
+这题面试官想考的，其实不是你会不会调用 `AbortController` 或 `child_process.spawn`，而是看你有没有真正治理过一个长期运行的 Agent 资源生命周期。
+
+你是停在“收到取消就 `abort()`，然后 `await` 抛异常”这种皮毛上，还是会继续追：谁持有 child process？stdout/stderr 到底走 pipe 还是文件？timeout 是失败、kill，还是转后台？kill 请求发出后，什么时候才能说进程真的退出？`Promise.race` 赢了以后，输家为什么还在跑？服务 shutdown 到底应该等多久？
+
+很可惜，这位林友当时回答：“Ctrl+C 会触发 AbortSignal，catch 住异常后清理资源就行。”面试官只追问了一句：“AbortSignal 触发，能证明孙进程和 fd 都关了吗？`unref()` 是取消 timer 吗？”他立刻卡住。面试官摇了摇头，让他回去等通知。
+
+今天这篇文章，我们就沿着 Claude Code 的 Bash 路径，从 `BashTool.call -> runShellCommand -> Shell.exec -> ShellCommandImpl` 一路往下扒：
+
+- `await exec()` 这一行背后到底有哪些 timer、I/O、microtask 和 owner？
+- 默认 Bash 输出为什么不是直接 `child.stdout.on('data')`？
+- timeout、abort、kill、background 为什么必须是四个不同动词？
+- tree-kill 请求发出后，逻辑结果和 OS exit confirmation 为什么可能不是同一时刻？
+- progress 怎样通过 `Promise.race` 和 poll signal 一段段 yield？
+- 为什么 cleanup 不能等同于 cancel，graceful shutdown 也不能无限等待？
+
+看完这一章，你应该能把“取消功能”答成一套资源收敛协议：请求、传播、动作、确认、升级、清理和预算。发车！
+
+### 这篇文章写给谁？
+
+这四个单元不再把读者假设成“已经熟悉 TypeScript、Node.js 和 Claude Code 的源码老手”。它同时面向三类人：
+
+- **零基础或基础薄弱的 Agent 学习者**：先从一次真实操作和一个可观察问题出发，再解释术语、类型和源码；
+- **正在准备大厂 Agent / Java 后端面试的人**：不仅要知道 Claude Code 怎么写，还要能把它迁移成工业级 Agent Harness 的设计答案；
+- **已经能读代码、但容易停在 happy path 的工程师**：重点追状态 owner、异常路径、取消、恢复、运行时验证和可证伪证据。
+
+### 这篇应该怎么学？
+
+不要把正文当成 API 手册从头背到尾。每一节都按同一条主线阅读：
+
+```text
+先看用户或面试场景
+-> 提出一个能被证伪的问题
+-> 找到决定性源码
+-> 追数据、状态与资源 owner
+-> 补异常路径和边界
+-> 用实验推翻错误直觉
+-> 最后压成两分钟面试表达
+```
+
+文中的 Claude Code 快照事实、clean-room 运行验证和 Mini Agent Harness 设计迁移仍然严格分开；新的叙事方式只负责把路带得更清楚，不会把推断包装成源码事实。
+
+> **原单元主题：** M03 `await` 之后还有运行时：事件循环、Stream、子进程与取消
+>
+> **内容保留说明：** 下文原有源码事实、代码片段、Mermaid 图、实验结果、破坏练习、H0 迁移、跨语言对照、企业治理、面试答案和源码定位均完整保留；本次修改只重构目标读者、叙事入口、章节标题、过渡方式与总结风格。
 
 > 本单元主体阅读与源码跟踪约 5.5 至 7 小时。双语言子进程实验、故障注入和扩展挑战另计约 2.5 至 4 小时。
 
@@ -29,7 +76,7 @@ const result = await exec(command, signal)
 
 本文把当前 `claude-code-CLI/` 中可直接核验的实现称为“快照事实”，把 `curriculum/units/M03/code/` 的结果称为“运行验证”，把 H0 的 ResourceScope 和生产方案称为“设计迁移”。快照由 source map 恢复，平台分支很多；涉及 Windows、POSIX、Bun 或特定 feature gate 时都会缩小表述。
 
-## 先把长命令的全部生命周期看见
+## 一、先看全貌：一条 Bash 命令从 tool_use 到 cleanup 经历了什么？
 
 ```mermaid
 flowchart TD
@@ -59,7 +106,7 @@ flowchart TD
 
 它们不是一个“大 Bash 函数”。每次跨 owner，都有新的状态和清理责任。
 
-## 事件循环不是一个神秘队列
+## 二、别再只说“Node 是单线程”：事件到底按什么时序恢复？
 
 TypeScript 学习者常把 Node event loop 背成一串 phases，却仍然解释不了当前源码。先建立够用的三层模型：
 
@@ -111,7 +158,7 @@ use(value)
 
 这也解释了 M02 的 `Promise.race`：它不是开新线程竞速，而是多个 promise 争夺“谁先 settled 并安排 continuation”。没有赢到的工作默认不会被取消。
 
-## `Shell.exec()`：先装配，再 spawn
+## 三、真正 spawn 之前，Shell.exec 已经做了多少事？
 
 当前快照的 `src/utils/Shell.ts:exec()` 接收：command、AbortSignal、shell type 和 timeout/progress/sandbox/background 等 options。它在 spawn 前完成 shell provider、cwd、环境和输出容器的装配。
 
@@ -151,7 +198,7 @@ flowchart LR
 
 这张图同时说明 abort 检查和资源 owner 的先后：输出 handle 在 spawn 失败时必须由 `Shell.exec()` 关闭；child 创建成功后，timer/listener 生命周期转给 ShellCommand。
 
-## stdout/stderr 有两条完全不同的路径
+## 四、命令输出到底怎么回来：文件轮询，还是 Readable pipe？
 
 看到 `child_process.spawn`，很多人会自动画：
 
@@ -185,7 +232,7 @@ flowchart TD
 
 这就是 M02 “AsyncIterable 不等于真实上游形状”的延伸。Node Readable 可以用 event、`.pipe()` 或 async iterator 消费；但当前 file mode 甚至绕开了 JS Readable。教材流程图必须按具体模式画。
 
-## Node Readable 的两种消费姿势
+## 五、同样是 Stream，`data` listener 和 `for await` 有什么区别？
 
 本章 clean-room 实现使用：
 
@@ -205,7 +252,7 @@ stream.on('data', handler)
 
 `StreamWrapper.cleanup()` 不 destroy stream，只移除自己的 data listener并释放对 stream/TaskOutput 的引用。它的职责是防内存引用泄漏，不是终止 child。这个边界后面会再次出现：cleanup 与 cancel 不能互换。
 
-## `ShellCommandImpl` 才是命令生命周期 owner
+## 六、谁真正拥有 child、timer、listener 和 result？
 
 `src/utils/ShellCommand.ts` 定义的公开状态是：
 
@@ -247,7 +294,9 @@ sequenceDiagram
   Grand-->>SC: stdio close 可能更晚
 ```
 
-## timeout、abort、kill、background 必须分四个动词
+## 七、最容易答错的一题：timeout、abort、kill、background 到底差在哪？
+
+> **这一节先不要背定义。** 每遇到一个事件，都问四件事：child 还跑不跑、owner 有没有变化、result 表示逻辑完成还是 OS 确认、cleanup 由谁接管。
 
 ### timeout
 
@@ -296,7 +345,7 @@ flowchart TD
 
 这张图是本章最重要的复习索引。以后看到“取消 Bash”，先问是哪一个动词，不要先猜结果。
 
-## progress 是 result 与 poll signal 的竞速
+## 八、命令还没结束，进度为什么能持续冒出来？
 
 `runShellCommand()` 是 async generator。它先调用 `Shell.exec()` 得到 ShellCommand，然后把 `shellCommand.result` 与 progress threshold、TaskOutput poll signal、background 状态组合起来。
 
@@ -341,7 +390,7 @@ threshold timer 赢时，resultPromise 仍在运行；result 赢时，timer call
 
 `unref()` 不是取消 timer。事件循环若因为其他资源仍活着，timer 到期仍可执行。看到 `.unref()` 应读成“移除 keep-alive 权重”，不是“删除任务”。
 
-## `.then()` 中的同步工作为什么影响 `await` 后的可见状态
+## 九、一个 `.then()`，为什么会改变 `await` 之后看到的状态？
 
 `Shell.exec()` 在返回 ShellCommand 前，先给 `shellCommand.result` 注册一个 `.then()`。它读取命令写下的 cwd 文件、更新全局 cwd、清理临时文件。源码特意使用同步 `readFileSync/unlinkSync`，并解释原因：这些动作要在 `.then()` 的当前 microtask 内完成。
 
@@ -360,7 +409,9 @@ sequenceDiagram
 
 若把 readFile 改成 `await readFile(...)`，reaction 1 会在读文件处再次让出，reaction 2 可能先继续，调用者就观察到旧 cwd。这是 microtask 语义怎样直接改变状态可见性的真实源码例子。
 
-## AbortController：通知图，不是 kill 方法
+## 十、AbortController 只是通知，那真正的终止动作谁来做？
+
+> **面试官想听的是桥接关系：** signal 只发布取消事实，resource adapter 才把它翻译成 abort request、stream destroy、tree-kill 或业务 background。
 
 `AbortController` 拥有 signal；调用 `abort(reason)` 只会把 signal 置为 aborted、保存 reason 并通知 listener。真正动作由 listener 实现。
 
@@ -391,7 +442,7 @@ flowchart LR
 
 这和本章 clean-room 实现有意不同：课程的 CancellationScope 保留 parent 或 timeout reason，方便 H0 状态机区分原因。那是设计迁移，不是对源码的描述。
 
-## cleanup 为什么不能只写在 process exit
+## 十一、资源清理为什么必须跟 owner 走，不能全塞进 exit？
 
 资源生命周期通常有三种结束入口：自然完成、用户取消、系统 shutdown。只在 happy path 清理 listener，会让重复运行不断积累 timer、AbortSignal handler、Readable 引用和 TaskOutput buffer。
 
@@ -406,7 +457,9 @@ ShellCommand 的 `cleanup()`：
 
 全局层还有 `cleanupRegistry.ts`。`registerCleanup()` 把 async cleanup 放进 Set，返回 unregister；`runCleanupFunctions()` 用 `Promise.all` 并行执行。它与本章 ResourceScope 的逆序串行 dispose 不同：前者追求全局关机预算内并行收敛，后者用于有依赖顺序的小资源域。
 
-## graceful shutdown 是有预算的降级流程
+## 十二、服务退出时，为什么既不能无限等，也不能立刻 `process.exit()`？
+
+> **这是生产系统题：** graceful 的本质不是“温柔退出”，而是在有限预算里按价值排序，先保护用户状态和协议完整性，再尽力收敛次要资源。
 
 `gracefulShutdown()` 不是无限等所有资源完美结束。快照先防重复进入，计算 SessionEnd hook budget，设置 failsafe timer；随后清终端模式、打印 resume hint，再把全局 cleanup 与 2 秒 timeout 做 race。
 
@@ -427,7 +480,7 @@ flowchart TD
 
 企业系统也需要这种优先级：先保护用户数据和终端/协议完整性，再尽力 flush 次要 telemetry。graceful 不等于无限等待，force 也不等于一开始就丢弃所有状态。
 
-## 用双语言实验验证“请求取消”与“确认退出”
+## 十三、别只看 cancelled：亲手验证“请求”和“确认”不是一回事
 
 代码位置：
 
@@ -492,7 +545,7 @@ timeout 走独立 reason，结果为 `timed_out` 而不是一般 `cancelled`。�
 
 每个破坏先写预测。第 3 项没有单一正确答案：它迫使你选择 result 是逻辑 ack 还是 OS exit confirmation，并把选择写进协议。
 
-## H0：合入取消域、资源域和可控时钟
+## 十四、把取消域、资源域和可控时钟合进 Mini Agent Harness
 
 M01 建了类型/状态契约，M02 建了事件端口。M03 合入三份能力：
 
@@ -525,7 +578,7 @@ flowchart TD
 
 Harness 不复制 `tree-kill` 或 Claude Code 的 numeric code。POSIX process group、Windows Job Object、container task kill 由部署平台适配。
 
-## Java/Spring：线程中断也不是强制终止
+## 十五、换成 Java/Spring：Thread.interrupt 真的能强杀任务吗？
 
 Java `Thread.interrupt()` 最接近合作式取消通知：它设置 interrupt flag，某些阻塞调用抛 `InterruptedException`，业务代码仍需尊重并传播。它不是安全的强制 thread kill。
 
@@ -546,13 +599,13 @@ HTTP/SSE cancel
 
 Reactor 的 `doFinally` 能观察 cancel/complete/error，但不自动知道外部 process 是否退出。需要显式 bridge。ThreadLocal 也不会自动跨 reactive continuation，应把 run ID、cancel reason 和 resource IDs 放进 Reactor Context 或显式参数。
 
-## Python asyncio：Task.cancel 只注入 CancelledError
+## 十六、换成 Python asyncio：Task.cancel 为什么仍然只是合作式通知？
 
 `asyncio.Task.cancel()` 请求在协程的下一个 suspension point 注入 `CancelledError`。协程可以在 finally 清理，也可能吞掉取消。subprocess 仍需 `terminate()`/`kill()` 并 `await process.wait()`。
 
 本章 Python 实验正是这条契约：cancel Event 只是来源；runner 收到后 terminate，给进程有限时间，再必要时 kill，最后 await wait。不要把 Java interrupt、Python Task.cancel 和 AbortSignal 当作可互换的强杀 API；它们共同点是合作式通知，资源动作各自不同。
 
-## 与 LangGraph 和企业 Agent 的关系
+## 十七、LangGraph run 被取消，节点里的子进程就一定停了吗？
 
 LangGraph run 可以被取消，节点也可以接收配置和异步资源，但框架不能自动杀死节点内部启动的任意 child process。节点若把进程 handle 藏在局部变量里，外层图取消只能停止等待，未必停止工作。
 
@@ -567,7 +620,7 @@ LangGraph run 可以被取消，节点也可以接收配置和异步资源，但
 
 SLO 可以写成：99% 用户取消在 500ms 内停止模型 token 输出，99% 普通 child 在 2s 内确认退出，未确认任务全部进入隔离队列并告警。指标必须分别测 request、signal sent 和 confirmed，不然“取消成功率 100%”可能只是在统计按钮点击。
 
-## 资深 Agent 开发岗面试：从 event loop 讲到资源收敛
+## 十八、面试官继续深挖：怎样从 event loop 讲到资源收敛？
 
 下面 8 道题覆盖资深面试官会从本章直接或间接追问的内容。参考回答先给结论，再落到 Claude Code 决定性设计、平台边界和生产方案。
 
@@ -621,7 +674,7 @@ SLO 可以写成：99% 用户取消在 500ms 内停止模型 token 输出，99% 
 
 面试回答不要只说“Node 是单线程”。真正有区分度的是：你能指出哪个 continuation 改了什么状态，哪个 signal 只是请求，哪个事件才确认资源收敛。
 
-## 离开本单元前，完成一次闭环
+## 十九、关掉答案：你能不能独立设计一条取消与退出确认链？
 
 关掉正文，先画一条命令从 BashTool.call 到 child spawn 的链。为每个组件标 owner：谁持有 child、timeout、abort listener、TaskOutput、progress signal 和 background task ID。
 
@@ -633,7 +686,19 @@ SLO 可以写成：99% 用户取消在 500ms 内停止模型 token 输出，99% 
 
 最后为自己的 Spring/RAG 项目设计 CancellationScope：至少包含 reason、deadline、resource owner、termination requested、exit confirmed、escalation 和 shutdown budget。若使用 LangGraph，明确节点内部 child handle 放在哪里，图取消怎样找到它。
 
-## 源码定位地图
+## 写在最后：资源生命周期背后的四个设计哲学
+
+一、**`await` 只是等待语法，不是生命周期管理器。** child、stream、timer、listener 和全局状态都有自己的 owner 与完成条件。
+
+二、**取消请求和退出确认必须分开。** Abort、interrupt、terminate、kill 都可能只是动作；真正释放隔离资源前，要知道系统承诺的是 logical ack 还是 OS confirmation。
+
+三、**background 不是“让 Promise 自己跑”。** 它是一次所有权转移，必须伴随 durable task、输出限制、后续通知和新的 cleanup owner。
+
+四、**graceful shutdown 必须有预算。** 先保证 transcript、终端和关键状态，再处理工具与连接，最后才是 telemetry；任何阶段都要有 failsafe。
+
+面试现场用一句话收束：**取消是通知图，资源收敛是 owner 驱动的确认流程，二者中间必须有明确的动作、超时和升级策略。**
+
+## 附录：源码定位地图
 
 行号只作当前快照辅助，优先按符号搜索：
 

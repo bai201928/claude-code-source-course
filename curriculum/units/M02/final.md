@@ -1,4 +1,51 @@
-# M02 值不是一次回来的：Promise、AsyncGenerator 与 Agent 事件流
+# M02 面试官问“Agent 为什么不能只 return Promise？”：从 AsyncGenerator 扒开事件流、终值、背压与关闭协议
+
+<!-- INTERVIEW_LED_STYLE_V1 -->
+
+这题面试官想考的，其实不是你会不会写 `async function*`，而是看你有没有把 Agent 当成“一段持续发生的过程”，而不是“一次晚点返回的函数调用”。
+
+很多候选人会回答：“因为要流式输出，所以用 AsyncGenerator。”这句话只答到最表面。面试官真正会继续追：`yield*` 和 `for await` 到底差在哪？生成器 `return` 的终值去了哪里？消费者 `break` 以后网络请求真的停了吗？用了 AsyncIterable 为什么仍然可能 OOM？错误应该 throw，还是作为 event 继续流？
+
+很可惜，这位林友当时只说：“Promise 一次返回，AsyncGenerator 可以多次 yield，所以体验更好。”面试官追问：“外层 `.return()` 后，`yield*` 后面的 completed 通知还会执行吗？多个模块能不能一起 `for await` 同一个流？”他沉默了。面试官摇摇头，让他回去等通知。
+
+今天这篇文章，我们就沿着 Claude Code 的 `query() -> queryLoop() -> QueryEngine.submitMessage()` 和 StreamingToolExecutor，把下面这些问题一次讲透：
+
+- 一次 Query 的事件、终值和异常分别走哪条通道？
+- 为什么 `yield*` 能拿到 Terminal，而普通 `for await` 拿不到？
+- 提前关闭生成器时，哪些 `finally` 会执行，哪些“正常完成”代码会被跳过？
+- Tool progress 为什么一边流、一边仍然进入数组缓存？
+- AsyncIterable 为什么不等于网络流、不等于背压、更不等于自动取消？
+- 已经 yield 的部分状态，后续 throw 为什么不会自动回滚？
+
+看完这一章，你应该能把“流式输出”答成一份完整的事件协议：生产、消费、缓冲、完成、失败、关闭和资源联动，一个都不能少。发车！
+
+### 这篇文章写给谁？
+
+这四个单元不再把读者假设成“已经熟悉 TypeScript、Node.js 和 Claude Code 的源码老手”。它同时面向三类人：
+
+- **零基础或基础薄弱的 Agent 学习者**：先从一次真实操作和一个可观察问题出发，再解释术语、类型和源码；
+- **正在准备大厂 Agent / Java 后端面试的人**：不仅要知道 Claude Code 怎么写，还要能把它迁移成工业级 Agent Harness 的设计答案；
+- **已经能读代码、但容易停在 happy path 的工程师**：重点追状态 owner、异常路径、取消、恢复、运行时验证和可证伪证据。
+
+### 这篇应该怎么学？
+
+不要把正文当成 API 手册从头背到尾。每一节都按同一条主线阅读：
+
+```text
+先看用户或面试场景
+-> 提出一个能被证伪的问题
+-> 找到决定性源码
+-> 追数据、状态与资源 owner
+-> 补异常路径和边界
+-> 用实验推翻错误直觉
+-> 最后压成两分钟面试表达
+```
+
+文中的 Claude Code 快照事实、clean-room 运行验证和 Mini Agent Harness 设计迁移仍然严格分开；新的叙事方式只负责把路带得更清楚，不会把推断包装成源码事实。
+
+> **原单元主题：** M02 值不是一次回来的：Promise、AsyncGenerator 与 Agent 事件流
+>
+> **内容保留说明：** 下文原有源码事实、代码片段、Mermaid 图、实验结果、破坏练习、H0 迁移、跨语言对照、企业治理、面试答案和源码定位均完整保留；本次修改只重构目标读者、叙事入口、章节标题、过渡方式与总结风格。
 
 > 本单元主体阅读与源码跟踪约 5 至 6.5 小时。双语言实验、破坏练习与企业扩展另计约 2 至 3 小时。
 
@@ -21,7 +68,7 @@ Claude Code 的 Query 和 Tool 路径因此不是“调用函数，等待最终�
 
 本文中的 Claude Code 结论来自本地 `claude-code-CLI/` 静态快照，标为“快照事实”；`curriculum/units/M02/code/` 的结果是 clean-room“运行验证”；H0 事件端口是“设计迁移”。Graphify 只用于找到候选源码，没有作为正文事实或图示证据。
 
-## 先把值经过的边界看清
+## 一、先别背语法：一句 Query 的值到底穿过了几层？
 
 先不要钻进某一行代码。一次 Query 的异步值会经过四种不同形状：
 
@@ -52,7 +99,7 @@ AsyncIterable != 自动取消
 
 它只保证“这个对象可以被异步地逐个迭代”。值从哪里来、队列是否有上限、退出时是否关闭 socket，都要继续读具体实现。
 
-## Promise 解决终值，事件流解决过程
+## 二、Promise 不是不够快，而是它只表达一次完成
 
 先从学习者最熟悉的 `Promise` 开始：
 
@@ -77,7 +124,7 @@ async function loadAnswer(): Promise<string> {
 
 Promise 的回调到底在 microtask 队列何时执行，为什么 timer 和 I/O 顺序不同，这些属于 M03。当前只需要一个不会错的模型：Promise 表达一次异步完成；async generator 表达可暂停、可继续、可关闭的多次异步交互。
 
-## 调用生成器不会立刻运行函数体
+## 三、你创建了生成器，代码为什么还没开始跑？
 
 看本单元的 clean-room 生产者：
 
@@ -143,7 +190,7 @@ while (true) {
 
 若把 `if (step.done)` 删除，再把 `value` 一律当 `HarnessEvent`，就会把协议的完成面抹掉。这不是一个格式问题，而是控制流错误。
 
-## `yield`、`return` 和 `throw` 是三种不同的完成
+## 四、模型流结束了：到底是 yield、return，还是 throw？
 
 对 async generator 做源码追踪时，不要只搜 `yield`。至少区分三条路径：
 
@@ -168,7 +215,9 @@ stateDiagram-v2
 
 业务系统还可能选择第四种表面形式：不 throw，而是 `yield {type:'error', ...}`。对迭代协议来说它仍是一个普通值，消费者不会进入 `catch`。因此“发生了错误”与“iterator rejected”必须分开描述。
 
-## `yield*` 不只是少写一个循环
+## 五、从 query 到 queryLoop：`yield*` 为什么是协议接力棒？
+
+> **这一节是高频追问：** “调用了子生成器”只是表面；真正要讲清的是中间事件怎样原样上浮、正常终值怎样被外层接住、异常和提前关闭又为什么跳过完成段。
 
 当前快照的 `src/query.ts:query()` 结构非常短，却决定了事件和终值怎样跨层：
 
@@ -238,7 +287,7 @@ flowchart LR
 
 这也是为什么 `finally` 与“业务正常完成”不能混为一谈。`finally` 表示退出时总要做的清理；completed 通知表示工作自然到达了协议终点。
 
-## `for await` 让 QueryEngine 边消费边修改状态
+## 六、事件一到，状态就改：QueryEngine 为什么不能等到最后再处理？
 
 `src/QueryEngine.ts:submitMessage()` 没有先等 `query()` 返回一个大对象。它直接：
 
@@ -282,7 +331,7 @@ flowchart TD
 
 没有永远正确的一种，关键是协议必须明确，不能让一部分消费者等 return value，另一部分只等 completion event。
 
-## 手动 `.next()`：需要终值时不要假装 `for await` 足够
+## 七、既要中间事件、又要最终对象，为什么必须手动 `.next()`？
 
 `src/services/api/claude.ts:executeNonStreamingRequest()` 展示了一个很好的反例。它包装重试生成器：重试期间可能产生 system API error message，最终正常完成时 return 一条 `BetaMessage`。
 
@@ -325,7 +374,7 @@ sequenceDiagram
 
 `queryModelWithStreaming()` 则主要用 `yield*` 转发流式模型事件，正常 return 类型没有需要上层使用的业务值。相同语法工具在不同位置承担不同协议，不要看到 `yield*` 就默认“一定有重要终值”。
 
-## Tool 进度为什么既像流，又仍然有缓存
+## 八、工具进度明明在流，为什么内存里还是有队列？
 
 `src/services/tools/StreamingToolExecutor.ts` 会为每个工具启动 `runToolUse()` 生成器，并用 `for await` 消费它。收到 update 后：
 
@@ -350,7 +399,9 @@ flowchart TD
 
 这里同时存在“流式”和“缓存”并不矛盾。流式描述值可以分段到达；缓存描述生产与消费速率不同时，未消费值暂时由谁持有。`pendingProgress[]` 与 `tool.results[]` 都是显式缓冲。工具并发顺序、sibling cancellation 和 discard 的完整业务语义留到 M15，但从语言层已经可以得出一条重要结论：`for await` 不会替你消灭队列。
 
-## `Stream<T>`：AsyncIterable 外观背后可以是 push queue
+## 九、用了 AsyncIterable 还会 OOM？看清 push queue 的真面目
+
+> **面试官在这里看工程经验：** 流式只说明分段到达，不说明生产者受控。看到 queue、pending waiter 和 subscriber，就要继续问上限、丢弃、阻塞与观测。
 
 `src/utils/stream.ts:Stream<T>` 更直接地推翻“AsyncIterable 就有端到端背压”。它的生产者调用 `enqueue(value)`，消费者调用 `next()`：
 
@@ -388,7 +439,9 @@ flowchart LR
 
 所有权表比“这是一个流”更有用。它能直接推出失败问题：如果 consumer 永远不再 `next()`，谁还持有 queue？如果 consumer `.return()`，returned callback 是否真的关闭上游？如果 progress 生产远快于 UI，数组会增长到什么程度？
 
-## 提前退出只发出关闭请求，不等于所有资源都停了
+## 十、用户不看了，模型和工具就真的都停了吗？
+
+> **先把结论记住：** iterator 关闭是控制流事实，socket、Promise、子进程是否停止是资源事实；两者之间必须有显式桥接。
 
 对 generator 自身，`for await` 中的 `break` 会尝试调用 iterator 的 `return()`，`finally` 会执行。这让我们能在 clean-room 代码中可靠记录 `producer.finally`。
 
@@ -416,7 +469,7 @@ flowchart TD
 
 当前 `queryLoop()` 有资源处置与具体工具对象，不能从本单元的语言实验推导“所有外部资源必然取消”。我们只确认两点：委托生成器的 Return completion 会关闭生成器链；端到端资源取消必须继续检查 disposer、iterator return、`AbortSignal` 和组件自己的 discard/kill 实现。M03 会把这条链落到 Node 资源上，M15 再处理工具执行器。
 
-## 错误有两条通道，消费者必须分别设计
+## 十一、错误应该 throw，还是当成普通 event 继续跑？
 
 把 Agent 中的失败画成一条异常线会丢失关键信息。至少有两条：
 
@@ -439,7 +492,7 @@ flowchart LR
 
 第三点尤其重要。async generator 不提供事务：前两个 yield 已经被 QueryEngine 写入后，第三次 next reject，不会自动撤销前两次写入。企业 Harness 要么接受 append-only 的部分历史并记录失败边界，要么在更高层引入 transaction/checkpoint，不能期待迭代器替你回滚。
 
-## 用实验让每个语法承诺变得可观察
+## 十二、别靠感觉：把惰性、终值、关闭和缓冲全部跑出来
 
 代码位于：
 
@@ -503,7 +556,7 @@ python demo.py
 
 每次先写预测、再运行、最后写“证明了什么”和“没有证明什么”。尤其不要用 finally trace 声称真实 Claude Code 网络连接已经关闭。
 
-## Python 不是 TypeScript 的逐行翻译
+## 十三、换成 Python，为什么完成协议必须重新设计？
 
 Python 的 async generator 同样由 `anext()`/`async for` 驱动，也支持 `aclose()` 和 `finally`。但 Python 语法禁止 async generator `return value`。你不能把 TypeScript 的 `AsyncGenerator<Event, RunSummary>` 原样翻成：
 
@@ -525,7 +578,7 @@ flowchart LR
 
 如果企业系统同时有 TypeScript gateway 和 Python worker，推荐把 completion 放进网络协议，而不是依赖某一种语言独有的 generator return value。进程内 TypeScript 层仍可保留 return summary 作为便利，但两者必须有清楚映射。
 
-## H0：把事件协议合入 Mini Agent Harness
+## 十四、把事件流真正合进 Mini Agent Harness
 
 M01 已经建立 Message、RunState 与运行时校验边界。M02 为 H0 增加异步事件端口：
 
@@ -564,7 +617,7 @@ flowchart TD
 
 取消令牌、清理注册表和可控 clock 暂不合入本章；它们依赖 M03 对 Node 资源生命周期的完整说明。这个 defer 防止把 `.return()` 错当成万能取消。
 
-## Java、Reactive Streams 与 Spring：相似处不等于等价
+## 十五、迁移到 Java 和 Spring：Flux 就等于 AsyncIterable 吗？
 
 Java 的 `CompletableFuture<T>` 最接近 `Promise<T>`：都表达一次未来完成，不表达多值 demand。多值异步序列更接近 `Flow.Publisher<T>`、Project Reactor 的 `Flux<T>`。
 
@@ -582,7 +635,7 @@ Transcript subscriber -> 经显式 multicast/fan-out 复制
 
 要特别处理客户端断开：SSE cancel signal 需要传播到 AgentRun，再连接到 WebClient request、工具 Future 和子进程。仅在 controller 的 `doFinally` 打日志，不会自动停止所有下游资源。
 
-## 与 LangGraph 的关系：stream mode 仍需底层协议
+## 十六、LangGraph 支持 streaming，就等于底层问题解决了吗？
 
 LangGraph 可以按 values、updates、messages 等模式流出执行过程，也能把节点状态变化提供给调用者。但框架提供流出口，不替你回答：
 
@@ -595,7 +648,7 @@ LangGraph 可以按 values、updates、messages 等模式流出执行过程，�
 
 理解 Claude Code 的 async generator 链，价值就在于你不会把“框架支持 streaming”当作完整设计。你会继续追踪 producer、queue、consumer 和 resource handle。
 
-## 提升到企业级：先写流协议，再选库
+## 十七、企业级 Agent 怎么设计：先写协议，再挑库
 
 一个可生产事件端口至少需要六项明确决定：
 
@@ -610,7 +663,7 @@ LangGraph 可以按 values、updates、messages 等模式流出执行过程，�
 
 生产治理还要避免慢消费者拖垮主循环。常见方案是单写者 dispatcher 负责状态与持久化，再将只读副本发送到有界 subscriber queue；关键 subscriber 超时让 run 失败，非关键观测 subscriber 可断开或降采样。选择必须落到 SLO：最大 queue depth、最大 event lag、取消确认时间和丢弃率。
 
-## 资深 Agent 开发岗面试：从异步语法讲到流控与取消
+## 十八、面试官继续深挖：怎样从 async generator 讲到流控与取消？
 
 下面的问题来自资深面试官会沿本章直接或间接展开的追问。参考回答保留面试现场可组织的口语节奏：第一句给结论，再讲机制、Claude Code 设计和企业边界。
 
@@ -658,7 +711,7 @@ LangGraph 可以按 values、updates、messages 等模式流出执行过程，�
 
 回答这些题时，不要一开口背 `AsyncGenerator<Y,R,N>`。先解释为什么 Agent 是一个过程，再用类型和源码证明你的机制结论；面试官继续追问时，再落到 `.next()`、`yield*`、queue owner、取消链和生产策略。
 
-## 离开本单元前，完成一次闭环
+## 十九、关掉答案：你能不能独立画出完整事件协议？
 
 先关掉正文，画一张只包含 producer、iterator、consumer 的 pull 时序图。标出第一次 `.next()` 前函数体是否执行、yield 后谁暂停、done:true 时 value 属于哪个类型。
 
@@ -670,7 +723,19 @@ LangGraph 可以按 values、updates、messages 等模式流出执行过程，�
 
 最后为自己的 RAG/Agent 项目写出事件协议，至少包含 run ID、sequence、normal completion、recoverable error、fatal failure 和 cancellation。决定 Python worker 怎样表达 TypeScript generator return value，再说明 Spring SSE 客户端断开后取消如何到达模型请求和工具资源。
 
-## 源码定位地图
+## 写在最后：事件流背后的四个设计哲学
+
+一、**Agent 首先是过程，其次才是结果。** 用户界面、Transcript、预算、工具进度和取消都依赖中间事件，而不是最后那个 FinalAnswer。
+
+二、**yielded event 与 generator return 是两份协议。** 谁只消费事件，谁还需要终值，必须在 API 设计时说清楚，不能靠调用者猜。
+
+三、**流式不等于背压。** AsyncIterable 可以包着无界 push queue；判断系统是否安全，要沿 producer、buffer、dispatcher、subscriber 一直追到底。
+
+四、**关闭控制流不等于关闭资源。** `finally` 是挂接取消和释放动作的位置，不是网络、工具和子进程已经停下来的证明。
+
+面试现场可以用一句话收束：**Promise 交付一次完成，事件流交付运行过程；真正的工业设计还要补上缓冲、关闭、错误和资源联动。**
+
+## 附录：源码定位地图
 
 行号只作当前快照辅助，优先按符号搜索：
 

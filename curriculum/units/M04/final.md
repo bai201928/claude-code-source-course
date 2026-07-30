@@ -1,4 +1,51 @@
-# M04 别把连线当调用：从类型、图邻接追到真实状态变化
+# M04 面试官问“你怎么证明这条调用链真的走过？”：从代码图、call site 追到状态 owner 与可验证证据
+
+<!-- INTERVIEW_LED_STYLE_V1 -->
+
+这题面试官想考的，其实不是你会不会用 IDE 查引用，也不是看你能不能画一张箭头很多的架构图，而是看你有没有能力把“结构上有关”与“运行时真的发生”分开。
+
+你是停在“QueryEngine import 了 query，所以 submitMessage 会调用 query”这种皮毛上，还是会继续追：真实 call site 在哪？什么 guard 决定本次是否到达？参数只是被传进去，还是对象真的被执行？状态到底改在长期 owner、当前 turn view，还是 usage 计数器？事件先 yield 后 throw，前面的副作用会不会留下？
+
+很可惜，这位林友当时打开 Call Hierarchy，画了一张 `ask -> QueryEngine -> query -> tool` 的图，就自信地说链路已经证明。面试官追问：“本地 slash command 也一定进模型吗？`canUseTool(tool, ...)` 为什么能证明 tool 被调用？”他回答不上来。面试官摇了摇头，让他回去等通知。
+
+今天这篇文章，我们就只追一个能被证伪的问题：一条 prompt 什么时候从 `QueryEngine.submitMessage()` 真正进入 `query()`，在那之前和之后，哪些状态已经改变？沿途会解决这些疑问：
+
+- import、contains、call、callback、mutation，分别能证明到哪一步？
+- Graphify 的 EXTRACTED 和 INFERRED 为什么都必须回源码核验？
+- `shouldQuery=false` 时，为什么“没调模型”不等于“什么都没发生”？
+- 数组浅快照怎样让长期消息 store 和本轮 request view 分离？
+- query event 到达后，谁修改 mutableMessages、Transcript、usage 和 SDK 输出？
+- 怎样用可计数 fake、TraceEvent 和部分失败测试证明一条边存在或不存在？
+
+看完这一章，你应该从“会搜代码”升级为“会建立证据链”：候选、调用点、条件、数据、owner、失败和可观察结果，缺一个都不能把箭头画成事实。发车！
+
+### 这篇文章写给谁？
+
+这四个单元不再把读者假设成“已经熟悉 TypeScript、Node.js 和 Claude Code 的源码老手”。它同时面向三类人：
+
+- **零基础或基础薄弱的 Agent 学习者**：先从一次真实操作和一个可观察问题出发，再解释术语、类型和源码；
+- **正在准备大厂 Agent / Java 后端面试的人**：不仅要知道 Claude Code 怎么写，还要能把它迁移成工业级 Agent Harness 的设计答案；
+- **已经能读代码、但容易停在 happy path 的工程师**：重点追状态 owner、异常路径、取消、恢复、运行时验证和可证伪证据。
+
+### 这篇应该怎么学？
+
+不要把正文当成 API 手册从头背到尾。每一节都按同一条主线阅读：
+
+```text
+先看用户或面试场景
+-> 提出一个能被证伪的问题
+-> 找到决定性源码
+-> 追数据、状态与资源 owner
+-> 补异常路径和边界
+-> 用实验推翻错误直觉
+-> 最后压成两分钟面试表达
+```
+
+文中的 Claude Code 快照事实、clean-room 运行验证和 Mini Agent Harness 设计迁移仍然严格分开；新的叙事方式只负责把路带得更清楚，不会把推断包装成源码事实。
+
+> **原单元主题：** M04 别把连线当调用：从类型、图邻接追到真实状态变化
+>
+> **内容保留说明：** 下文原有源码事实、代码片段、Mermaid 图、实验结果、破坏练习、H0 迁移、跨语言对照、企业治理、面试答案和源码定位均完整保留；本次修改只重构目标读者、叙事入口、章节标题、过渡方式与总结风格。
 
 > 本单元主体阅读与源码跟踪约 5 至 6.5 小时。双语言 Trace 实验、反证练习和扩展挑战另计约 2.5 至 4 小时。
 
@@ -21,7 +68,7 @@ submitMessage indirect_call tool
 
 这条追踪会把 M01 的类型边界、M02 的异步生成器和 M03 的运行时资源接成一种可重复的方法。本文所说的 QueryEngine 路径属于当前 `claude-code-CLI/` 快照；交互式 REPL 有自己的 `onQuery -> query()` 适配路径，不要因为类名叫 QueryEngine 就把所有运行表面塞进它。
 
-## 先看见“源码关系”不是一种关系
+## 一、先拆掉第一层错觉：源码里的“连线”根本不是同一种关系
 
 ```mermaid
 flowchart TD
@@ -48,7 +95,7 @@ flowchart TD
 
 低层证据不是“错误证据”。`import` 对定位文件非常有价值，只是它不能回答运行问题。严谨不是要求每次都找到最强证据，而是让证据强度与结论强度匹配。
 
-## Graphify 先缩小搜索面，但不替你作结论
+## 二、Graphify 能帮你找路，但为什么不能替你下结论？
 
 本单元的 Graphify 查询出现过两个很有教育意义的结果。用 `import call state tests` 一类高频词搜索时，图扩展出 253 个节点；缩成 `query engine` 后，又因为 `src/ink/layout/engine.ts` 这个同名模块扩展到 1149 个节点。
 
@@ -82,7 +129,7 @@ flowchart LR
 
 Graphify 在正文中的作用到这里结束。接下来的事实全部来自直接源码和可运行实验。
 
-## 先验证那条看起来最真的边
+## 三、第一条硬证据：submitMessage 真的在哪里调用 query？
 
 `src/QueryEngine.ts` 顶部有：
 
@@ -124,7 +171,9 @@ for await (const message of query({
 
 一个好的源码结论通常同时写“证明什么”和“尚未证明什么”。这能阻止后续段落在不知不觉中扩大断言。
 
-## 再向上找 guard：import 了也可以一次都不调用
+## 四、call site 明明存在，为什么这次仍然可能一次都不调用？
+
+> **这一节决定你是否真的会读运行路径：** call site 证明“可以调用”，guard 才证明“这个输入会不会调用”；本地命令、权限拒绝和 feature gate 都可能让结构边不发生。
 
 要回答“是否总会调用”，必须向上找到控制这个 call site 的分支。
 
@@ -181,7 +230,7 @@ flowchart TD
 
 注意顺序：即使不进入 Query，用户输入消息也已经被追加，并可能先写 transcript。把 `shouldQuery=false` 简化成“什么都没发生”同样错误。
 
-## 假阳性为什么出现：传一个值，不等于调用它
+## 五、最常见假阳性：把 tool 当参数传入，等于执行 tool 吗？
 
 Graphify 把 `QueryEngine.ts:L253` 标成 `tool()` 的 inferred indirect call。打开源码后看到：
 
@@ -246,7 +295,7 @@ return x   -> 返回 x，不调用
 
 最后一种还要求继续找“谁调用闭包”。只看到闭包定义，不能声称闭包体已经执行。
 
-## 向上追 caller：谁创建 owner，谁只做一轮适配
+## 六、从 ask 往下看：谁创建会话 owner，谁只是一次性适配？
 
 确认 `submitMessage -> query` 后，还要回答这条链从哪里进入。当前 SDK/Headless 的 convenience wrapper 是 `ask()`。
 
@@ -296,7 +345,9 @@ flowchart LR
 
 边界必须保留：当前源码注释说 QueryEngine 可供 headless/SDK 使用，并提到未来 REPL 复用；当前交互式 REPL 并不是通过 QueryEngine 才能进入 `query()`。追 caller 时，注释的愿景和当前调用点要分开。
 
-## 找到 state owner，才能解释“调用产生了什么”
+## 七、只找到函数还不够：真正决定后果的是 state owner
+
+> **面试官在这里看架构能力：** owner 决定状态跨不跨 turn、失败后留不留下、并发时谁竞争；函数名只能告诉你动作发生在哪里。
 
 `QueryEngine` 的字段比类名更诚实：
 
@@ -341,7 +392,7 @@ flowchart TD
 
 源码追踪到调用点却不找 owner，最终只能说“数据经过了这里”。找到 owner 和 mutation site 后，才能说清失败后留下什么、下一 turn 看见什么、并发时谁会竞争。
 
-## 数组浅快照：引用关系也属于调用证据
+## 八、两行数组代码，为什么足以改变整条消息链的解释？
 
 下面两行是 M04 的小型试金石：
 
@@ -373,7 +424,7 @@ flowchart LR
 
 M11 会完整讲请求投影；M04 只要求掌握追踪动作：看到复制，立刻画引用；看到 push，标明目标数组；看到对象 mutation，再检查元素身份是否共享。
 
-## 向下追 callee：事件不是“query 返回一个结果”
+## 九、query 不是返回一个大对象：每个事件到底改了什么？
 
 M02 已讲过 `for await`。在这里，它改变的是状态证据：每个 event 到达后，`switch (message.type)` 执行不同副作用。
 
@@ -403,7 +454,7 @@ flowchart TD
 
 所以“`submitMessage` 调用了 query”只是调用链的一半。完整解释至少还要说：事件怎样被消费，哪个分支修改哪个 owner，哪些状态只在本地累计，哪些值继续对外 yield。
 
-## 失败路径：部分状态不会因为 throw 自动撤销
+## 十、流中途炸了，前面写入的状态会自动回滚吗？
 
 假设 query 先 yield 一条 assistant message，QueryEngine 已经把它 push 到 `mutableMessages`，随后下一次迭代抛异常。JavaScript 没有自动事务语义；此前的数组 push、transcript enqueue 或 usage 更新不会因为 generator throw 自动回滚。
 
@@ -433,7 +484,7 @@ sequenceDiagram
 
 “请求失败”不是一个能覆盖这些层次的布尔值。
 
-## 依赖注入让调用图从箭头变成协议
+## 十一、依赖注入之后，静态调用图为什么天然不完整？
 
 `QueryEngineConfig` 注入 `canUseTool`、`getAppState`、`setAppState`、cache getter/setter、Elicitation handler 等函数。静态源码可以看到字段被调用，却未必知道运行时具体绑定哪个实现。
 
@@ -455,7 +506,7 @@ flowchart LR
 
 如果第三步在当前单元不重要，可以停在“调用注入的 CanUseToolFn，具体实现由 caller 决定”，但不能凭字段名虚构具体类。成熟的源码阅读允许有边界地停止。
 
-## 测试不是源码的装饰，也不是万能真相
+## 十二、没有官方专题测试时，怎样保持结论可信？
 
 理想情况下，你会从原仓库测试确认：本地分支不调用 Query、事件分支更新哪些字段、异常后留下什么。当前快照没有提供可直接定位的 QueryEngine 专题测试文件，因此不能声称“官方测试已覆盖”。此外，`src/query.ts` 还 type-import `./query/transitions.js`，但当前快照缺少对应 `src/query/transitions.ts`；这意味着不能把原项目 Query 路径说成已能在本地完整 typecheck 或直接构造运行。静态调用与状态结论仍可从可见源码核验，运行层则必须明确使用独立 clean-room 复现。
 
@@ -467,7 +518,9 @@ flowchart LR
 
 本单元采用第三种，同时明确它验证的是追踪方法和 H0 设计，不是给 Claude Code 快照补官方测试。
 
-## 用 TraceLog 把“我看懂了”改成可反驳事件
+## 十三、别说“我看懂了”：用 TraceLog 把解释变成可反驳事件
+
+> **真正可靠的源码结论要允许被推翻。** 让 fake 统计调用次数，让 Trace 记录 owner mutation，让部分失败暴露提交点，比再画一张大图更有说服力。
 
 代码位置：
 
@@ -560,7 +613,7 @@ permission callback 收到 ToolProbe，只读取 `name`。若“出现为调用�
 
 queryStream 先 yield `partial`，再 throw。caller 最终看到异常，但 engine state 保留 user 与 partial assistant，Trace 最后是 `call.failed`。这证明没有自动事务回滚。
 
-## 做六次有目的的破坏
+## 十四、亲手制造六次失败，看看哪条解释最先站不住
 
 1. 删除 `shouldQuery` guard，观察本地命令也调用 Query；说明 import 不变但运行边改变。
 2. 把 `requestView = [...messages]` 改成直接引用，观察后续 owner push 怎样改变视图长度。
@@ -571,7 +624,7 @@ queryStream 先 yield `partial`，再 throw。caller 最终看到异常，但 en
 
 每次先写预测，再改代码。你的目标不是“制造红灯”，而是说明哪条源码解释会被这个红灯推翻。
 
-## 一次可复用的追踪循环
+## 十五、把这次分析收敛成一套可复用的源码追踪循环
 
 现在把本章过程收敛成一个循环，而不是死清单：
 
@@ -601,7 +654,7 @@ flowchart TD
 
 停止条件也很重要。若你的结论只需要说明“调用注入的权限协议”，找到 callback 类型和调用点就可能足够；若要解释某个企业策略为何拒绝，才需要继续追 composition root。无界追踪不是深度，是失去问题边界。
 
-## H0：合入可观察证据与跨语言行为测试骨架
+## 十六、把可观察证据与跨语言测试合进 Mini Agent Harness
 
 M01 给了类型与状态契约，M02 给了异步事件端口，M03 给了取消/资源收敛。M04 增加的不是另一套 Agent 功能，而是让这些契约可被持续验证的骨架。
 
@@ -633,7 +686,7 @@ flowchart TD
 
 失败语义：Trace 写入失败不能阻断核心 Agent 运行；测试模式可以 fail-fast，生产模式应有采样、限流和脱敏。H0 当前使用内存数组，后续 M40 再接完整观测治理。
 
-## Java/Spring：Bean 注入图也不是运行时调用图
+## 十七、换成 Java/Spring：Bean 依赖图为什么也不是运行调用图？
 
 Spring 容器能告诉你 Bean A 依赖 Bean B，但不能证明一次请求执行了 B 的哪个方法。`@Autowired PermissionPolicy` 类似 QueryEngineConfig 的 callback 注入：composition root 建立依赖，业务方法在具体分支调用协议。
 
@@ -649,7 +702,7 @@ Java 追踪时也分三层：
 
 本章 H0 TraceEvent 可映射成 Java sealed interface；测试用 fake `ProcessInput`/`QueryPort` 记录 invocation，状态修改用领域事件或 test probe 观察。重要的是保持同一不变量，而不是把 TypeScript 私有字段逐行翻成 Java class。
 
-## Python：duck typing 更需要显式 composition root
+## 十八、换成 Python：动态绑定为什么更需要 composition root 与 fake？
 
 Python 把 async callable 直接传入对象非常自然，但静态工具更难确定具体实现。Protocol/type hint 可以说明期望形状，运行 trace 和 fake 才能证明某次绑定。
 
@@ -662,7 +715,7 @@ Python 把 async callable 直接传入对象非常自然，但静态工具更难
 
 它没有模仿 TypeScript private field 或 union 穷尽检查。两种语言共享的是“什么必须被观察”，而不是“怎样写相同语法”。
 
-## LangGraph：图节点边是编排允许，不是所有内部副作用
+## 十九、LangGraph 画了节点边，就能代表所有内部副作用吗？
 
 LangGraph 的 edge 表示控制可以从节点 A 转到节点 B；conditional edge 仍要看 state/router 才知道本次走哪条。节点 B 内部又可能调用模型、Tool、数据库或子进程，这些不会自动出现在上层图边里。
 
@@ -676,7 +729,7 @@ LangGraph 的 edge 表示控制可以从节点 A 转到节点 B；conditional ed
 
 Claude Code 的 `shouldQuery` 与 LangGraph conditional edge 很相似：结构上存在目标不代表本次会走。不同点是 QueryEngine 用普通 TypeScript 分支和 async generator 实现，不应反过来说它“就是一个 LangGraph”。
 
-## 企业级迁移：把代码图、运行 trace 和契约测试分层治理
+## 二十、企业级代码智能：静态图、运行 Trace、契约测试怎么分层治理？
 
 企业代码智能系统常把 AST、依赖图、distributed trace、日志和测试覆盖率塞进一个 UI。好的系统不会把它们压成一种“关系”。
 
@@ -702,7 +755,7 @@ flowchart LR
 
 代码审查时，可以要求每个高风险 Agent 改动回答三件事：新增了哪条静态依赖，改变了哪个运行分支，哪个契约测试或 trace 能观察到。这样 Graphify/IDE 帮你找候选，测试帮你固定行为，生产 trace 帮你发现环境差异，各司其职。
 
-## 资深 Agent 开发岗面试：从“会搜代码”讲到可验证架构
+## 二十一、面试官继续深挖：怎样把“查引用”答成可验证架构？
 
 下面 8 道题覆盖面试官会从源码追踪直接延伸出的调用、依赖注入、状态、异步失败和企业观测问题。参考回答都先给结论，再展开 Claude Code 的决定性例子和生产边界。
 
@@ -756,7 +809,7 @@ flowchart LR
 
 真正有区分度的回答不是“我会用 IDE 查引用”，而是你能说明哪种边支持哪种结论、何时需要继续追、怎样用失败输入推翻自己的解释。
 
-## 离开本单元前，完成一次纵向证据闭环
+## 二十二、关掉答案：你能不能独立完成一次纵向证据闭环？
 
 先关掉本文，写下一个问题：“一条本地 slash command 是否调用模型 Query？”画出 `ask -> QueryEngine -> processUserInput -> shouldQuery -> query/local result`，在每条箭头上标 `constructs`、`calls`、`returns flag`、`branches` 或 `yields`，不要都写“经过”。
 
@@ -768,7 +821,19 @@ flowchart LR
 
 最后选你自己的 Spring/LangGraph/RAG 项目做同样切片：一个 Bean/节点边、一个真实方法调用、一个状态 reducer、一个外部副作用和一个失败恢复。能把这五者分开，你才真正具备进入 M05 以后复杂运行表面的源码追踪能力。
 
-## 源码定位地图
+## 写在最后：源码追踪背后的四个设计哲学
+
+一、**静态边首先是假说，不是运行事实。** import、contains 和 references 用来缩小搜索面；call site、guard 与 trace 才能逐步增强结论。
+
+二、**条件决定路径，owner 决定后果。** 是否调用要看 guard，调用以后留下什么要看 mutation site 与生命周期 owner。
+
+三、**参数传递、回调调用和真实副作用必须分开。** `f(x)`、`x()`、`x.run()` 与 `() => x()` 是四种不同关系，任何图工具都可能在这里产生假阳性。
+
+四、**证据必须分层治理。** 静态图说明可能影响，契约测试说明给定场景的不变量，运行 trace 说明这一次真实发生；没有任何一层可以单独代表全局真相。
+
+面试现场用一句话收束：**我不从箭头猜调用，而是从 call site、guard、owner、mutation、失败路径和可观察反证建立证据链。**
+
+## 附录：源码定位地图
 
 行号只作当前快照辅助，优先按符号搜索：
 

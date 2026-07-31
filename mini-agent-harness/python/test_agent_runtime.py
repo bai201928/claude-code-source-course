@@ -15,7 +15,10 @@ from agent_runtime import (
     PermissionGate,
     PermissionRequest,
     RequestProjectionPolicy,
+    ResultBudgetLedger,
+    ResultBudgetLedgerChange,
     ScriptedModel,
+    StaleReplacementRevisionError,
     ToolContext,
     ToolProgress,
     ToolRegistry,
@@ -169,6 +172,75 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("workspace=demo", repr(projection_events))
         self.assertNotIn(full_output, repr(projection_events))
+
+    async def test_aggregate_result_budget_is_stable_and_preserves_durable_output(self) -> None:
+        async def search(values, _context):
+            return str(values["letter"]) * 80
+
+        def final(request, _index, _signal):
+            result_chars = sum(
+                len(message.content or "")
+                for message in request.messages
+                if message.role == "tool"
+            )
+            self.assertLessEqual(result_chars, 220)
+            return ModelResponse("response-2", "done")
+
+        model = ScriptedModel(
+            (
+                lambda _request, _index, _signal: ModelResponse(
+                    "response-1",
+                    tool_calls=(
+                        call("call-a", "search", letter="A"),
+                        call("call-b", "search", letter="B"),
+                        call("call-c", "search", letter="C"),
+                    ),
+                ),
+                final,
+            )
+        )
+        runtime, store, trace = fixture(
+            model,
+            (tool("search", search),),
+            request_projection_policy=RequestProjectionPolicy(
+                max_tool_result_group_chars=220,
+                tool_result_preview_chars=4,
+            ),
+        )
+
+        result = await runtime.submit("search", CancellationSignal())
+
+        self.assertEqual(result.status, "completed")
+        durable_outputs = [
+            message.output
+            for message in store.snapshot().messages
+            if isinstance(message, ToolResultMessage)
+        ]
+        self.assertEqual(durable_outputs, ["A" * 80, "B" * 80, "C" * 80])
+        projection = [
+            event for event in trace.events if event.event_type == "request.projected"
+        ][-1]
+        self.assertEqual(projection.attributes["aggregate_budget_group_count"], 1)
+        self.assertEqual(projection.attributes["newly_replaced_tool_result_count"], 1)
+        self.assertEqual(projection.attributes["replacement_revision"], 1)
+        self.assertNotIn("AAAA", repr(projection.attributes))
+
+    async def test_replacement_ledger_rejects_stale_metadata_writer(self) -> None:
+        ledger = ResultBudgetLedger()
+        snapshot = ledger.snapshot()
+        first = ResultBudgetLedgerChange(
+            snapshot.revision,
+            frozenset({"call-a"}),
+            (("call-a", "preview-a"),),
+        )
+        stale = ResultBudgetLedgerChange(
+            snapshot.revision,
+            frozenset({"call-b"}),
+            (("call-b", "preview-b"),),
+        )
+        self.assertEqual(ledger.commit(first), 1)
+        with self.assertRaises(StaleReplacementRevisionError):
+            ledger.commit(stale)
 
     async def test_permission_denial_is_a_paired_error_result(self) -> None:
         executed = False

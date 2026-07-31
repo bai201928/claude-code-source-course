@@ -35,6 +35,7 @@ The loop has one durable message owner. Each `ConversationStore` binds exactly o
 | Released S0 / M01-M04 | runtime validation, legal state transitions, pull-driven events, cancellation/resource boundaries and traceable call evidence | H0 domain core and cumulative regression |
 | Released S1 / M05-M09 | surface/core separation, configuration provenance, immutable request state, capability projection and budgeted lifecycle | H1 runtime shell around the H0 core |
 | Released S2 / M10-M15 | durable message ownership, request projection, provider boundary, run-channel separation, bounded stream lifecycle and ordered concurrent Tool Loop | H2 / Harness 0.3.0 single-agent vertical slice |
+| Released S3 / M16-M19 | aggregate budget, revision-checked Compact, scoped/trusted instruction snapshots and governed memory recall | H3 / Harness 0.4.0 Context and Memory milestone |
 
 M14 contributes a provider-neutral bounded stream contract and standalone assembly experiments. M15 contributes the explicit execution plan, bounded safe batches, exclusive barriers, ordered publication and exactly-once outcomes. Provider-specific SSE assembly and Runtime streaming consumption remain deferred.
 
@@ -48,7 +49,14 @@ M14 contributes a provider-neutral bounded stream contract and standalone assemb
 | Session metadata | `SessionStateStore` | request factory | publication |
 | Durable messages and tool pairing | `ConversationStore` | request projector, diagnostics | revision-checked append/replace |
 | Request visibility and preview limits | `RequestProjectionPolicy` | request projector | runtime composition |
+| Cross-iteration result replacement decisions | `ResultBudgetLedger` | request projector, metadata trace | expected-revision commit after strict validation |
 | Projection counts and validation status | `RequestProjectionReport` | metadata trace | one report per request |
+| Compact plan and provenance | `CompactCoordinator` | runtime, recovery | immutable prepare against one Store revision |
+| Compact journal records | `CompactJournal` | recovery | prepared/committed append under the runtime run lease |
+| Instruction sources and revision | `InstructionCatalog` | request composition | expected-revision publication |
+| Per-request instruction view | `InstructionPipeline` | model request composer | immutable scope/trust projection |
+| Memory candidates and accepted records | `MemoryStore` | memory projector, governance | expected-revision lifecycle transition |
+| Per-request accepted-memory view | `MemoryProjector` | model request composer | scope, relevance, item and character budget |
 | Current model iteration | `AgentRuntime` | trace/event observers | single-flight run |
 | Model-visible tools | `CapabilitySnapshot` | request projector, registry | new iteration boundary |
 | Tool handlers | `AgentToolRegistry` | runtime | bootstrap registration |
@@ -62,13 +70,24 @@ M14 contributes a provider-neutral bounded stream contract and standalone assemb
 
 1. select a valid history start from the immutable snapshot;
 2. insert request-only user context after leading system messages;
-3. replace over-limit tool output with a deterministic bounded preview;
-4. validate tool call/result pairing again after projection;
-5. return a content-free report with counts and validation status.
+3. apply the existing deterministic per-result preview policy;
+4. snapshot the runtime-owned replacement ledger and enforce an aggregate limit over each Provider-neutral tool-result group;
+5. insert request-only user context;
+6. validate tool call/result pairing again after every projection;
+7. commit replacement decisions with the ledger's expected revision;
+8. return a content-free report with counts, over-budget groups, ledger revision and validation status.
 
 The second strict validation is required because a full conversation can be legal while a selected suffix begins at an orphan tool result. Projection failure happens before the Provider call. Neither request-only context nor preview content is written back to durable history, and Trace receives only scalar report fields.
 
-The current preview is deliberately per result. It is not presented as Claude Code's aggregate API-user-group budget. Cross-turn replacement state, external result storage, resume records, compact transactions and Prompt Cache edits need the later Context and Transcript contracts.
+H3-1 adds aggregate budgeting for the Harness's own Provider-neutral request shape. The stable ledger freezes prior decisions and replays exact preview strings, but it remains process-local. It is a clean-room migration of the consistency idea, not a claim that contiguous OpenAI-compatible `tool` messages are identical to Claude Code's internal API-user grouping.
+
+H3-2 adds an explicit Compact transaction. The runtime acquires the same single-flight lease used by `submit`, prepares a summary from an immutable source revision, expands the retained tail until tool pairs remain request-valid, then writes prepared/committed journal records before one revision-checked Store replacement. Cancellation before commit preserves the original owner; stale plans fail before journal mutation; recovery distinguishes `restored`, `fell_back` and `repair_required` without placing message content in its report or Trace. The current journal is in-memory, so this is a transaction state-machine contract rather than a crash-durable transcript claim. Filesystem persistence, resume reconstruction, compaction/transcript reconciliation and Prompt Cache edits remain later contracts.
+
+H3-3 adds an independent `InstructionCatalog` and `InstructionPipeline`. A source carries kind, scope root, optional path prefixes, trust and content; projection rejects untrusted/out-of-scope sources, deduplicates normalized paths and emits an immutable managed-to-dynamic request view. Dynamic instructions are request-only and never mutate the Catalog. Stale Catalog writers and stale request projections fail by revision, while reports contain only counts and source IDs. This is deliberately not a CLAUDE.md parser or filesystem discovery service; it migrates the ownership and trust contract without claiming parity with every Rules, nested-memory or attachment path.
+
+H3-4 adds an independent `MemoryStore` and `MemoryProjector`. Observations enter as candidates and remain invisible until an explicit revision-gated acceptance. Project/session scope, provenance, retention and superseded/expired states belong to the Store; the Projector derives one deterministic, item/character-bounded request view. Memory Trace contains only operation metadata, IDs, revision and scope. This state machine is a clean-room governance design: the verified Claude Code snapshot has Session Memory, Auto Memory topic/index files, relevance attachments and Auto Dream, but not this unified candidate/accepted store.
+
+Instruction and memory views are currently explicit composition inputs rather than hidden `AgentRuntime.submit()` side effects. This keeps their revisions and failure policies observable; a caller can place the projected text into the existing request-only context boundary. Automatic discovery, persistence and request wiring remain later integration work.
 
 ## Provider boundary
 
@@ -135,6 +154,10 @@ Implemented now:
 - persistent in-process conversation;
 - request and capability snapshots per model iteration;
 - explicit history/context/preview request policy, strict post-projection validation and metadata report;
+- aggregate tool-result group budgeting with exact replacement replay and expected-revision ledger commits;
+- revision-checked Compact prepare/commit/recovery with tool-pair-aware tail retention;
+- scoped, trusted and revisioned instruction projection with request-only dynamic deltas;
+- candidate-gated, scoped and revisioned memory lifecycle with retention and bounded recall;
 - real OpenAI-compatible provider port;
 - bounded concurrent single-agent tool loop with safe batches, exclusive barriers and ordered publication;
 - read/search/list tools and explicitly granted command executables;
@@ -146,7 +169,8 @@ Implemented now:
 Explicitly deferred:
 
 - Provider-specific SSE streaming assembly and Runtime streaming assistant/tool consumption;
-- aggregate result budgeting, external result storage, context compression and memory;
+- external result storage, crash-durable Compact records and transcript resume;
+- persistent/vector memory, PII/DLP enforcement, distributed writers and automatic Runtime memory wiring;
 - Hook, Skill, MCP and Plugin execution;
 - subagents and teams;
 - transcript persistence, resume and crash recovery;

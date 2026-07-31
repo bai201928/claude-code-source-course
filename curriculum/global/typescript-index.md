@@ -1,6 +1,6 @@
 # TypeScript 与 Node.js 难点索引
 
-状态：`S2 已发布`
+状态：`S3 已发布`
 
 | 难点 | 首次系统讲解 | 源码/机制强化 | 当前掌握边界 | 后续复用 |
 | --- | --- | --- | --- | --- |
@@ -45,5 +45,9 @@
 | bounded single-consumer stream | M14 | capacity、close-to-abort、finally cleanup | 本地背压不等于网络端到端背压 | 后台任务、观测 |
 | dynamic predicate 与 worker pool | M15 | parse 后 safety、safe batch、exclusive barrier | 分类异常 fail closed；固定上限避免无界并发 | Hook、MCP、Task |
 | completion order 与 commit order | M15 | call ID outcome map、ordered context/result publication | 并发执行不要求乱序持久化 | Transcript、恢复 |
+| copy-on-write 与 revision ledger | M16 | aggregate result projection、exact replay | request优化不改 durable source，stale writer显式失败 | Memory、分布式投影 |
+| transaction plan 与 discriminated recovery | M17 | CompactPlan、prepared/committed、recovery report | prepare/commit/恢复分层，in-memory不等于crash durable | Transcript、Task |
+| 路径正规化与稳定排序 | M18 | InstructionCatalog/Pipeline、scope prefix、dedupe | filesystem source与request view分权 | Skill、MCP、Plugin |
+| lifecycle union 与 bounded projection | M19 | candidate/accepted/rejected/superseded/expired | 状态迁移、scope、retention和recall budget协作 | Task、Team、治理 |
 
-S0-S2 仍不是 TypeScript 的最终教程。后续机制首次引入尚未覆盖的语言能力时，继续按“最小语义 -> 当前源码作用 -> Java/Python 对照 -> 可运行验证”补齐。
+S0-S3 仍不是 TypeScript 的最终教程。后续机制首次引入尚未覆盖的语言能力时，继续按“最小语义 -> 当前源码作用 -> Java/Python 对照 -> 可运行验证”补齐。

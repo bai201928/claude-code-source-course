@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Literal, Protocol, TypeAlias
 
+from compact import (
+    CompactCommitSummary,
+    CompactCoordinator,
+    CompactJournal,
+    ConversationSummarizer,
+)
+
 from conversation_store import (
     ActiveRunError,
     AssistantMessage,
@@ -108,6 +115,7 @@ class RequestProjectionPolicy:
     history_start: int = 0
     user_context: str = ""
     max_tool_result_chars: int | None = None
+    max_tool_result_group_chars: int | None = None
     tool_result_preview_chars: int = 96
 
 
@@ -118,12 +126,78 @@ class RequestProjectionReport:
     projected_count: int
     omitted_before_history_start: int
     replaced_tool_result_count: int
+    newly_replaced_tool_result_count: int
+    reapplied_tool_result_count: int
+    frozen_tool_result_count: int
+    aggregate_budget_group_count: int
+    over_budget_tool_result_group_count: int
+    replacement_revision: int
     user_context_injected: bool
     strict_validation: Literal["passed"] = "passed"
 
 
 class RequestProjectionError(ValueError):
     pass
+
+
+class StaleReplacementRevisionError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class ResultBudgetLedgerSnapshot:
+    revision: int
+    seen_ids: frozenset[str]
+    replacements: tuple[tuple[str, str], ...]
+
+    def replacement_map(self) -> dict[str, str]:
+        return dict(self.replacements)
+
+
+@dataclass(frozen=True)
+class ResultBudgetLedgerChange:
+    expected_revision: int
+    seen_ids: frozenset[str]
+    replacements: tuple[tuple[str, str], ...]
+
+
+class ResultBudgetLedger:
+    def __init__(self) -> None:
+        self._revision = 0
+        self._seen_ids: set[str] = set()
+        self._replacements: dict[str, str] = {}
+
+    def snapshot(self) -> ResultBudgetLedgerSnapshot:
+        return ResultBudgetLedgerSnapshot(
+            self._revision,
+            frozenset(self._seen_ids),
+            tuple(sorted(self._replacements.items())),
+        )
+
+    def commit(self, change: ResultBudgetLedgerChange) -> int:
+        if change.expected_revision != self._revision:
+            raise StaleReplacementRevisionError(
+                f"replacement revision {change.expected_revision} is stale; "
+                f"current={self._revision}"
+            )
+        old_seen = len(self._seen_ids)
+        old_replacements = dict(self._replacements)
+        self._seen_ids.update(change.seen_ids)
+        self._replacements.update(dict(change.replacements))
+        if len(self._seen_ids) != old_seen or self._replacements != old_replacements:
+            self._revision += 1
+        return self._revision
+
+
+@dataclass(frozen=True)
+class _AggregateProjection:
+    messages: tuple[ModelMessage, ...]
+    newly_replaced_count: int
+    reapplied_count: int
+    frozen_count: int
+    group_count: int
+    over_budget_group_count: int
+    change: ResultBudgetLedgerChange
 
 
 @dataclass(frozen=True)
@@ -625,6 +699,7 @@ class AgentRuntime:
         trace: TraceRecorder | None = None,
         ids: MonotonicIdSource | None = None,
         request_projection_policy: RequestProjectionPolicy | None = None,
+        compact_journal: CompactJournal | None = None,
     ) -> None:
         if isinstance(max_turns, bool) or not isinstance(max_turns, int):
             raise ValueError("max_turns must be an integer from 1 to 32")
@@ -643,6 +718,10 @@ class AgentRuntime:
         self._request_projection_policy = (
             request_projection_policy or RequestProjectionPolicy()
         )
+        self._result_budget_ledger = ResultBudgetLedger()
+        self._compact_coordinator = CompactCoordinator(
+            self._conversation, compact_journal
+        )
 
     @property
     def trace(self) -> TraceRecorder:
@@ -654,6 +733,73 @@ class AgentRuntime:
 
     def conversation_snapshot(self) -> ConversationSnapshot:
         return self._conversation.snapshot()
+
+    async def compact(
+        self,
+        summarizer: ConversationSummarizer,
+        signal: CancellationSignal,
+        *,
+        retain_last: int = 8,
+    ) -> CompactCommitSummary:
+        transaction_id = self._ids.next("compact")
+        run_lease = self._conversation.acquire_run(self)
+        try:
+            self._trace.record(
+                transaction_id,
+                "compact.started",
+                {
+                    "source_revision": self._conversation.revision,
+                    "retain_last": retain_last,
+                },
+            )
+            plan = await self._compact_coordinator.prepare(
+                summarizer,
+                transaction_id=transaction_id,
+                boundary_id=self._ids.next("compact-boundary"),
+                summary_id=self._ids.next("compact-summary"),
+                retain_last=retain_last,
+                signal=signal,
+            )
+            self._trace.record(
+                transaction_id,
+                "compact.prepared",
+                {
+                    "source_revision": plan.expected_revision,
+                    "source_count": len(plan.original),
+                    "summarized_count": len(
+                        plan.provenance.summarized_message_ids
+                    ),
+                    "retained_count": len(plan.provenance.retained_message_ids),
+                },
+            )
+            committed = self._compact_coordinator.commit(
+                plan, run_lease, signal
+            )
+            self._trace.record(
+                transaction_id,
+                "compact.committed",
+                {
+                    "source_revision": committed.source_revision,
+                    "committed_revision": committed.committed_revision,
+                    "source_count": committed.source_count,
+                    "summarized_count": committed.summarized_count,
+                    "retained_count": committed.retained_count,
+                },
+            )
+            return committed
+        except Exception as error:
+            self._trace.record(
+                transaction_id,
+                "compact.failed",
+                {
+                    "source_revision": self._conversation.revision,
+                    "cancelled": signal.cancelled,
+                    "error_type": type(error).__name__,
+                },
+            )
+            raise
+        finally:
+            self._conversation.release_run(self, run_lease)
 
     async def submit(
         self, user_input: str, signal: CancellationSignal
@@ -697,6 +843,12 @@ class AgentRuntime:
                         "selected_message_count": projection_report.selected_count,
                         "omitted_before_history_start": projection_report.omitted_before_history_start,
                         "replaced_tool_result_count": projection_report.replaced_tool_result_count,
+                        "newly_replaced_tool_result_count": projection_report.newly_replaced_tool_result_count,
+                        "reapplied_tool_result_count": projection_report.reapplied_tool_result_count,
+                        "frozen_tool_result_count": projection_report.frozen_tool_result_count,
+                        "aggregate_budget_group_count": projection_report.aggregate_budget_group_count,
+                        "over_budget_tool_result_group_count": projection_report.over_budget_tool_result_group_count,
+                        "replacement_revision": projection_report.replacement_revision,
                         "user_context_injected": projection_report.user_context_injected,
                         "strict_validation": projection_report.strict_validation,
                     },
@@ -934,6 +1086,17 @@ class AgentRuntime:
                 "max_tool_result_chars must be a positive integer"
             )
         if (
+            policy.max_tool_result_group_chars is not None
+            and (
+                isinstance(policy.max_tool_result_group_chars, bool)
+                or not isinstance(policy.max_tool_result_group_chars, int)
+                or policy.max_tool_result_group_chars < 1
+            )
+        ):
+            raise RequestProjectionError(
+                "max_tool_result_group_chars must be a positive integer"
+            )
+        if (
             isinstance(policy.tool_result_preview_chars, bool)
             or not isinstance(policy.tool_result_preview_chars, int)
             or policy.tool_result_preview_chars < 0
@@ -943,8 +1106,8 @@ class AgentRuntime:
             )
 
         selected = snapshot.messages[policy.history_start :]
-        projected: list[ModelMessage] = []
-        replaced = 0
+        per_result_projected: list[ModelMessage] = []
+        per_result_replaced = 0
         for message in selected:
             model_message = _project_message(message)
             if (
@@ -953,7 +1116,7 @@ class AgentRuntime:
                 and model_message.content is not None
                 and len(model_message.content) > policy.max_tool_result_chars
             ):
-                replaced += 1
+                per_result_replaced += 1
                 prefix = model_message.content[: policy.tool_result_preview_chars]
                 model_message = ModelMessage(
                     "tool",
@@ -961,7 +1124,20 @@ class AgentRuntime:
                     f"{len(model_message.content)} chars; prefix={prefix!r}]",
                     tool_call_id=model_message.tool_call_id,
                 )
-            projected.append(model_message)
+            per_result_projected.append(model_message)
+
+        ledger_snapshot = self._result_budget_ledger.snapshot()
+        aggregate = (
+            _empty_aggregate_projection(per_result_projected, ledger_snapshot.revision)
+            if policy.max_tool_result_group_chars is None
+            else _apply_aggregate_result_budget(
+                per_result_projected,
+                ledger_snapshot,
+                policy.max_tool_result_group_chars,
+                policy.tool_result_preview_chars,
+            )
+        )
+        projected = list(aggregate.messages)
 
         user_context = policy.user_context.strip()
         if user_context:
@@ -981,6 +1157,7 @@ class AgentRuntime:
                 ),
             )
         _assert_strict_request_pairing(projected)
+        replacement_revision = self._result_budget_ledger.commit(aggregate.change)
         request = ModelRequest(
             request_id,
             self._model.model,
@@ -988,12 +1165,22 @@ class AgentRuntime:
             self._tools.definitions(),
         )
         report = RequestProjectionReport(
-            len(snapshot.messages),
-            len(selected),
-            len(projected),
-            policy.history_start,
-            replaced,
-            bool(user_context),
+            source_count=len(snapshot.messages),
+            selected_count=len(selected),
+            projected_count=len(projected),
+            omitted_before_history_start=policy.history_start,
+            replaced_tool_result_count=(
+                per_result_replaced
+                + aggregate.newly_replaced_count
+                + aggregate.reapplied_count
+            ),
+            newly_replaced_tool_result_count=aggregate.newly_replaced_count,
+            reapplied_tool_result_count=aggregate.reapplied_count,
+            frozen_tool_result_count=aggregate.frozen_count,
+            aggregate_budget_group_count=aggregate.group_count,
+            over_budget_tool_result_group_count=aggregate.over_budget_group_count,
+            replacement_revision=replacement_revision,
+            user_context_injected=bool(user_context),
         )
         return request, report
 
@@ -1089,6 +1276,113 @@ def _project_message(message: DurableMessage) -> ModelMessage:
         )
         return ModelMessage("assistant", text or None, calls)
     raise TypeError(f"unknown durable message: {type(message).__name__}")
+
+
+def _empty_aggregate_projection(
+    messages: Sequence[ModelMessage], revision: int
+) -> _AggregateProjection:
+    return _AggregateProjection(
+        tuple(messages),
+        0,
+        0,
+        0,
+        0,
+        0,
+        ResultBudgetLedgerChange(revision, frozenset(), ()),
+    )
+
+
+def _apply_aggregate_result_budget(
+    messages: Sequence[ModelMessage],
+    ledger: ResultBudgetLedgerSnapshot,
+    limit: int,
+    preview_chars: int,
+) -> _AggregateProjection:
+    projected = list(messages)
+    groups: list[list[int]] = []
+    current: list[int] = []
+    for index, message in enumerate(messages):
+        if message.role == "tool":
+            current.append(index)
+        elif current:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+
+    seen_delta: set[str] = set()
+    replacement_delta: dict[str, str] = {}
+    newly_replaced = 0
+    reapplied = 0
+    frozen = 0
+    over_budget_groups = 0
+    prior_replacements = ledger.replacement_map()
+
+    for group in groups:
+        fresh: list[tuple[int, str, str]] = []
+        for index in group:
+            message = projected[index]
+            call_id = message.tool_call_id or ""
+            prior = prior_replacements.get(call_id)
+            if prior is not None:
+                projected[index] = ModelMessage(
+                    "tool", prior, tool_call_id=call_id
+                )
+                reapplied += 1
+            elif call_id in ledger.seen_ids:
+                frozen += 1
+            else:
+                fresh.append((index, call_id, message.content or ""))
+
+        projected_chars = sum(len(projected[index].content or "") for index in group)
+        remaining = list(fresh)
+        while projected_chars > limit and remaining:
+            ranked = sorted(
+                (
+                    (
+                        len(content) - len(_tool_result_preview(call_id, content, preview_chars)),
+                        call_id,
+                        index,
+                        content,
+                        _tool_result_preview(call_id, content, preview_chars),
+                    )
+                    for index, call_id, content in remaining
+                ),
+                key=lambda item: (-item[0], item[1]),
+            )
+            reduction, call_id, index, _content, preview = ranked[0]
+            if reduction <= 0:
+                break
+            remaining = [item for item in remaining if item[1] != call_id]
+            projected[index] = ModelMessage("tool", preview, tool_call_id=call_id)
+            projected_chars -= reduction
+            replacement_delta[call_id] = preview
+            newly_replaced += 1
+
+        seen_delta.update(call_id for _index, call_id, _content in fresh)
+        if projected_chars > limit:
+            over_budget_groups += 1
+
+    return _AggregateProjection(
+        tuple(projected),
+        newly_replaced,
+        reapplied,
+        frozen,
+        len(groups),
+        over_budget_groups,
+        ResultBudgetLedgerChange(
+            ledger.revision,
+            frozenset(seen_delta),
+            tuple(sorted(replacement_delta.items())),
+        ),
+    )
+
+
+def _tool_result_preview(call_id: str, content: str, preview_chars: int) -> str:
+    return (
+        f"[tool result {call_id} preview: {len(content)} chars; "
+        f"prefix={content[:preview_chars]!r}]"
+    )
 
 
 def _assert_strict_request_pairing(messages: Sequence[ModelMessage]) -> None:

@@ -1,6 +1,6 @@
-# S0-S2 已确认知识摘要
+# S0-S3 已确认知识摘要
 
-状态：`S2 已发布`
+状态：`S3 已发布`
 
 S0 的目标不是让学习者记住四组 API，而是建立阅读后续 Claude Code 主线的基础动作：
 
@@ -67,6 +67,23 @@ H1 仍不包含真实模型、完整消息会话 owner、Query/Tool Loop、完�
 H2 / Harness `0.3.0` 在 H0/H1 上累计了 revisioned `ConversationStore`、单 Runtime owner 与 active-run lease、请求/能力快照、history/context/preview 投影、strict pairing、OpenAI-compatible Provider、有界单消费者流，以及带 safe batch、exclusive barrier、固定 worker pool 和 ordered publication 的 Permission-aware Tool Loop。TypeScript 主实现与 Python 行为镜像均通过统一回归。
 
 H2 仍不承诺 Provider-specific SSE parser 或 Runtime streaming tool execution，也不包含完整 Context 压缩/记忆、Hook/Skill/MCP/Plugin、多 Agent、Transcript 恢复、Sandbox、分布式执行或生产级 OTel/cost ledger。后续阶段继续在该契约上演进。
+
+## S3 已确认结论
+
+- Context 是 durable history 到 request view 的管线：history boundary、结果预算、snip/microcompact、attachment、normalization 与 wire cache edit有不同 owner 和预算单位。
+- 全量 history 合法不代表任意 suffix 合法；任何可能改变 message membership 或 content 的投影都要在 Provider 前重新检查 tool pairing。
+- Compact 是 history replacement transaction，不是原地删字符串；summary、safe retained tail、revision、journal、取消和 recovery state必须一起设计。
+- CLAUDE.md/Rules 的文件存在、discovery、trust、scope、assembly、attachment normalization 和 model visibility 是不同完成点；custom system prompt 也不会自动关闭独立 userContext。
+- Session Memory、Auto Memory、compact summary、Instruction 与 Transcript 不是一种 Memory。Session Memory服务当前 session compact，Auto Memory topic/index可跨 session召回。
+- relevance recall 是带 query、结果数、字节、freshness和attachment生命周期的 request-time投影，不是永久注入。
+- 当前 Auto Memory 主写入与后台提炼只做到 `tool_use` 写入意图级 best-effort互斥，没有与 `tool_result`成功配对，不能宣称 exactly-once。
+- Auto Dream把跨 session consolidation移出主响应，但当前快照没有 candidate approval、多文件事务或 revision CAS。
+
+## H3 能力
+
+H3 / Harness `0.4.0` 在 H2 上累计 aggregate `ResultBudgetLedger`、revision-gated `CompactCoordinator`、scoped/trusted `InstructionCatalog` / `InstructionPipeline` 和 candidate-gated `MemoryStore` / `MemoryProjector`。Conversation、replacement、Compact、Instruction 与 Memory拥有独立 revision；request view与普通 Trace不回写正文。
+
+H3 仍不承诺 crash-durable Transcript/Resume、完整 CLAUDE.md discovery、自动 Runtime instruction/memory wiring、persistent/vector memory、PII/DLP enforcement、Hook/Skill/MCP/Plugin、多 Agent、Sandbox或分布式执行。
 
 ## 证据边界
 

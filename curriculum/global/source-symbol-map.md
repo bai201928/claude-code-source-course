@@ -1,6 +1,6 @@
-# S0-S2 源码符号地图
+# S0-S3 源码符号地图
 
-状态：`S2 已发布`
+状态：`S3 已发布`
 
 行号只作当前快照辅助，稳定定位采用“路径 -> 符号 -> 决定性分支”。
 
@@ -62,5 +62,14 @@
 | M15 | `src/services/tools/StreamingToolExecutor.ts` -> `addTool()` / `processQueue()` / `discard()` | parse 后安全分类、safe/unsafe 屏障、child abort 与非 rollback discard |
 | M15 | `src/services/tools/toolOrchestration.ts` -> `partitionToolCalls()` / `runTools()` | response-complete safe batch、并发上限与 ordered modifiers |
 | M15 | `src/services/tools/toolExecution.ts` -> `runToolUse()` | schema、Hook、Permission、call、alias fallback 与 paired error result |
+| M16 | `src/query.ts` -> `messagesForQuery` / aggregate budget / snip / microcompact | 轻量 Context 管线、预算单位与稳定 replacement state |
+| M16 | `src/utils/messages.ts` / `src/services/api/claude.ts` | normalization、temporary userContext 与 wire cache edit |
+| M17 | `src/services/compact/` / `query.ts` -> auto/traditional compact | threshold、summary fork、hook、boundary、fallback 与 Query continuation |
+| M17 | `src/utils/sessionStorage.ts` -> enqueue/append/flush/relink | Transcript 完成点、logical parent 与 resume-visible chain |
+| M18 | `src/utils/claudemd.ts` -> `getMemoryFiles()` / `processMemoryFile()` | instruction discovery、include、Rules、trust、scope 与 cache |
+| M18 | `src/context.ts` / `queryContext.ts` / `attachments.ts` | userContext、system prompt、nested/dynamic attachment 与 request visibility |
+| M19 | `src/services/SessionMemory/` / `services/compact/sessionMemoryCompact.ts` | session summary extraction、safe boundary、SM-first compact 与 fallback |
+| M19 | `src/services/extractMemories/` / `src/memdir/` | Auto Memory topic/index、best-effort extraction 与 relevance attachment |
+| M19 | `src/services/autoDream/` | time/session/lock gates 与跨 session consolidation |
 
 已知快照边界：`src/types/message.ts`、`src/types/utils.ts`、`src/types/tools.ts` 与 `src/query/transitions.ts` 缺失，不能声称原项目完整 typecheck，也不能从 import 名称补造完整类型声明。

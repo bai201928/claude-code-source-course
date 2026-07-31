@@ -2,7 +2,7 @@
 
 这是随 Claude Code 源码教材累计演进的 clean-room Agent Harness。它不复制 Claude Code 私有实现；当前目标是用一条边界清楚、可运行、可测试的单 Agent 纵切，证明学习者真正理解了消息、状态、请求投影、模型调用、工具反馈、权限、取消和收尾怎样协作。
 
-当前版本：`H2 / 0.3.0`（S2 正式里程碑）
+当前版本：`H3 / 0.4.0`（S3 正式里程碑）
 
 ## 现在已经能做什么
 
@@ -24,6 +24,11 @@ flowchart LR
   TOOL --> RESULT["paired tool result"]
   RESULT --> CS
   CS -->|"下一次模型迭代"| RP
+  CS --> COMPACT["CompactCoordinator\nprepare / commit / recovery"]
+  IC["InstructionCatalog"] --> IP["InstructionPipeline\nscope / trust / revision"]
+  MS["MemoryStore"] --> MP["MemoryProjector\naccepted / bounded recall"]
+  IP -. "request-only view" .-> RP
+  MP -. "request-only view" .-> RP
   AR --> TRACE["metadata-only Trace"]
   RP --> REPORT["metadata-only ProjectionReport"]
   REPORT --> TRACE
@@ -37,6 +42,10 @@ flowchart LR
 - 每次模型迭代冻结 RequestContext 与 CapabilitySnapshot；
 - `RequestProjectionPolicy` 支持 history start、request-only context 和 bounded tool-result preview，投影后 strict 校验 pairing；
 - `RequestProjectionReport` 只输出成员计数、omission、replacement count 与状态，不复制 prompt 或 tool output；
+- aggregate tool-result group budget、跨轮 exact replacement replay、ledger revision 与投影后 strict pairing；
+- `CompactCoordinator` 的 revision-gated prepare/commit、tool-pair-safe retained tail、prepared/committed journal 与显式 recovery report；
+- 独立 `InstructionCatalog` / `InstructionPipeline`，按 source、scope、trust、revision 生成 immutable request view，dynamic source 不回写 catalog；
+- 独立 `MemoryStore` / `MemoryProjector`，candidate 必须显式 accept，支持 project/session scope、provenance、retention、bounded recall 与 content-free Trace；
 - OpenAI-compatible Chat Completions 适配器，可连接 DeepSeek 兼容端点；
 - `read_file`、`list_files`、`search_text` 与默认拒绝的 `run_command`；
 - capability 可见、permission 允许、handler 注册三层独立校验；
@@ -44,10 +53,10 @@ flowchart LR
 - 工具可以并发完成，但 outcome、context update 与 durable tool result 始终按 assistant call 原顺序提交；
 - 工具失败/拒绝反馈、取消后补齐配对、单会话 single-flight 和最大轮次；
 - 不记录 prompt、tool payload、HTTP body 或 credential 的结构化 Trace；
-- TypeScript 主实现、Python 核心行为镜像，以及 H0/H1/H2 累计回归；
+- TypeScript 主实现、Python 核心行为镜像，以及 H0/H1/H2/H3 累计回归；
 - M14 已加入 provider-neutral 的 `BoundedAgentRunStream`：固定容量、单消费者、terminal metadata、consumer close 到 owner abort/cleanup 的契约；现有 `complete()` 适配器保持兼容。
 
-详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，行为不变量见 [contracts/h2-contract.md](contracts/h2-contract.md)。
+详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，行为不变量见 [contracts/h3-contract.md](contracts/h3-contract.md)。
 
 ## 快速运行
 
@@ -124,15 +133,19 @@ npm run agent -- --grant-executable rg --grant-executable node
 | --- | --- |
 | Agent Runtime | 两轮 tool loop、Permission 拒绝、工具取消配对、single-flight、Provider failure |
 | Request projection | history start、ephemeral context、bounded preview、strict pairing、durable source/Trace 隔离 |
+| Context budget | aggregate result budget、exact replay、stale ledger、over-budget report |
+| Compact | revision gate、取消、prepared recovery、tool-pair-safe tail、metadata-only report |
+| Instructions | source layering、scope/trust、dedupe、stale snapshot、request-only dynamic delta |
+| Memory | candidate acceptance、scope、provenance、stale revision、retention、bounded recall、content-free Trace |
 | Provider protocol | Chat Completions 请求投影、tool call JSON、usage、脱敏 HTTP 错误、URL 约束 |
 | Built-in tools | workspace 越界、`rg` 搜索、默认拒绝命令、secret 不进入子进程 |
 | Tool scheduler | safe batch、exclusive barrier、并发上限、顺序提交、progress 与 exactly-once outcome |
 | Python mirror | 与 TypeScript 一致的 loop、pairing、permission、cancel、stream 和 scheduler 行为 |
-| 累计回归 | H2 -> H1 -> H0 与所有历史行为契约 |
+| 累计回归 | H3 -> H2 -> H1 -> H0 与所有历史行为契约 |
 
 真实 API 冒烟与确定性测试分开。模型可达不证明 Tool Loop 正确，fake provider 测试通过也不伪装成真实网络验证。
 
-当前验证基线（2026-07-30）：`npm test` 共 `47/47`（Config `1/1`、Runtime `25/25`、Provider `7/7`、Tool `5/5`、Scheduler `5/5`、Stream `4/4`），本地锁定编译器 strict typecheck 通过；统一 Python Agent/Scheduler/Stream 回归 `22/22`，ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成回归 `4/4` 全部通过。M15 独立调度实验为 TypeScript `6/6`、Python `6/6`。
+当前验证基线（2026-07-31）：`npm test` 共 `69/69`（Config `1/1`、Runtime `27/27`、Compact `5/5`、Instructions `7/7`、Memory `8/8`、Provider `7/7`、Tool `5/5`、Scheduler `5/5`、Stream `4/4`），本地锁定编译器 strict typecheck 通过；统一 Python Agent/Compact/Instructions/Memory/Scheduler/Stream 回归 `43/43`，ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成回归 `4/4` 全部通过。
 
 ## 为什么适合简历和面试讲解
 
@@ -144,11 +157,13 @@ npm run agent -- --grant-executable rg --grant-executable node
 4. 为什么 tool error 必须回到协议消息，取消后为什么还要补齐未执行 call 的 result；
 5. credential、配置、Trace 和子进程环境怎样隔离；
 6. single-flight、max turns、AbortSignal 与 budgeted shutdown 分别守住什么失控边界。
+7. 为什么 Context projection、Compact transaction、Instruction catalog 与 Memory lifecycle 必须拥有不同 revision；
+8. 为什么 candidate memory 不能直接进入模型请求，retention 与 bounded recall 又由谁执行。
 
 一条准确的简历描述可以是：
 
-> 设计并实现 TypeScript/Python 单 Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、请求/能力快照、带安全批次与独占屏障的并发 Tool Loop、顺序提交、取消与配对恢复、工作区受限工具及脱敏 Trace，并用确定性协议测试和真实 Provider 冒烟分层验证。
+> 设计并实现 TypeScript/Python 单 Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、请求/能力快照、并发 Tool Loop、Compact transaction、scoped Instruction Pipeline 与 candidate-gated Memory recall，守住顺序提交、取消与配对恢复、工作区工具和 content-free Trace，并用确定性协议测试与真实 Provider 冒烟分层验证。
 
 ## 当前边界
 
-本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 增量消费、streaming tool execution、透明 model fallback、完整 Context 压缩、aggregate tool-result budget、外置结果恢复、Hook/Skill/MCP/Plugin、Subagent/Team、Transcript 恢复、Sandbox、分布式执行和完整 OTel/cost ledger。当前并发调度发生在完整 `ModelResponse` 到达后；统一 Harness executor 是 clean-room 设计迁移，不等同于 Claude Code 快照的两条执行路径。
+本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 增量消费、streaming tool execution、透明 model fallback、crash-durable Compact/Transcript、外置结果恢复、完整 CLAUDE.md discovery、Hook/Skill/MCP/Plugin、Subagent/Team、数据库持久化 Memory、embedding recall、PII/DLP enforcement、Sandbox、分布式执行和完整 OTel/cost ledger。Instruction 与 Memory projector 当前是可组合、已测试的独立 owner，尚未自动接入每次 `AgentRuntime.submit()`；调用方必须显式生成 request-only context。统一 Harness executor 也是 clean-room 设计迁移，不等同于 Claude Code 快照的两条执行路径。

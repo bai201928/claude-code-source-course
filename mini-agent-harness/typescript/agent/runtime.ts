@@ -22,9 +22,16 @@ import {
   type SessionStateStore,
 } from '../runtimeContext.ts'
 import type { ModelAdapter, ModelResponse, ModelUsage } from './model.ts'
+import {
+  CompactCoordinator,
+  type CompactCommitSummary,
+  type CompactJournal,
+  type ConversationSummarizer,
+} from './compact.ts'
 import type { PermissionGate } from './permissions.ts'
 import {
   RequestProjector,
+  ResultBudgetLedger,
   type RequestProjectionPolicy,
 } from './requestProjector.ts'
 import { TraceRecorder } from './trace.ts'
@@ -101,6 +108,8 @@ export type AgentRuntimeOptions = Readonly<{
   ids?: IdSource
   systemPrompt?: string
   requestProjectionPolicy?: RequestProjectionPolicy
+  resultBudgetLedger?: ResultBudgetLedger
+  compactJournal?: CompactJournal
 }>
 
 export class AgentRuntime {
@@ -118,6 +127,7 @@ export class AgentRuntime {
   readonly #capabilityProjector: CapabilityProjector
   readonly #requestProjector: RequestProjector
   readonly #requestProjectionPolicy: RequestProjectionPolicy
+  readonly #compactCoordinator: CompactCoordinator
   readonly #trace: TraceRecorder
   readonly #events?: AgentEventSink
   readonly #ids: IdSource
@@ -140,10 +150,17 @@ export class AgentRuntime {
     this.#toolScheduler = new ToolScheduler(options.tools, options.maxToolConcurrency ?? 4)
     this.#conversation = options.conversation ?? new ConversationStore()
     this.#capabilityProjector = options.capabilityProjector ?? new CapabilityProjector()
-    this.#requestProjector = new RequestProjector(this.#conversation)
+    this.#requestProjector = new RequestProjector(
+      this.#conversation,
+      options.resultBudgetLedger,
+    )
     this.#requestProjectionPolicy = Object.freeze({
       ...options.requestProjectionPolicy,
     })
+    this.#compactCoordinator = new CompactCoordinator(
+      this.#conversation,
+      options.compactJournal,
+    )
     this.#trace = options.trace
     this.#events = options.events
     this.#ids = options.ids ?? new MonotonicIdSource()
@@ -166,6 +183,55 @@ export class AgentRuntime {
 
   conversationSnapshot(): ConversationSnapshot {
     return this.#conversation.snapshot()
+  }
+
+  async compact(
+    summarizer: ConversationSummarizer,
+    options: Readonly<{ retainLast?: number }> = {},
+    signal: AbortSignal,
+  ): Promise<CompactCommitSummary> {
+    const transactionId = this.#ids.next('compact')
+    const runLease = this.#conversation.acquireRun(this)
+    try {
+      await this.#trace.record(transactionId, 'compact.started', {
+        sourceRevision: this.#conversation.revision,
+        retainLast: options.retainLast ?? 8,
+      })
+      const plan = await this.#compactCoordinator.prepare(
+        summarizer,
+        {
+          transactionId,
+          boundaryId: this.#ids.next('compact-boundary'),
+          summaryId: this.#ids.next('compact-summary'),
+          retainLast: options.retainLast ?? 8,
+        },
+        signal,
+      )
+      await this.#trace.record(transactionId, 'compact.prepared', {
+        sourceRevision: plan.expectedRevision,
+        sourceCount: plan.original.length,
+        summarizedCount: plan.provenance.summarizedMessageIds.length,
+        retainedCount: plan.provenance.retainedMessageIds.length,
+      })
+      const committed = this.#compactCoordinator.commit(plan, runLease, signal)
+      await this.#trace.record(transactionId, 'compact.committed', {
+        sourceRevision: committed.summary.sourceRevision,
+        committedRevision: committed.summary.committedRevision,
+        sourceCount: committed.summary.sourceCount,
+        summarizedCount: committed.summary.summarizedCount,
+        retainedCount: committed.summary.retainedCount,
+      })
+      return committed.summary
+    } catch (error) {
+      await this.#trace.record(transactionId, 'compact.failed', {
+        sourceRevision: this.#conversation.revision,
+        cancelled: signal.aborted,
+        errorType: error instanceof Error ? error.constructor.name : 'UnknownError',
+      })
+      throw error
+    } finally {
+      this.#conversation.releaseRun(this, runLease)
+    }
   }
 
   async submit(input: string, signal: AbortSignal): Promise<AgentRunSummary> {
@@ -231,6 +297,15 @@ export class AgentRuntime {
           selectedMessageCount: projection.report.selectedCount,
           omittedBeforeHistoryStart: projection.report.omittedBeforeHistoryStart,
           replacedToolResultCount: projection.report.replacedToolResultCount,
+          newlyReplacedToolResultCount:
+            projection.report.newlyReplacedToolResultCount,
+          reappliedToolResultCount: projection.report.reappliedToolResultCount,
+          frozenToolResultCount: projection.report.frozenToolResultCount,
+          aggregateBudgetGroupCount:
+            projection.report.aggregateBudgetGroupCount,
+          overBudgetToolResultGroupCount:
+            projection.report.overBudgetToolResultGroupCount,
+          replacementRevision: projection.report.replacementRevision,
           userContextInjected: projection.report.userContextInjected,
           strictValidation: projection.report.strictValidation,
         })

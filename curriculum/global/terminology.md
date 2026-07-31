@@ -1,6 +1,6 @@
 # 全局术语表
 
-状态：`S2 已发布`
+状态：`S3 已发布`
 
 本表只保存后续单元需要复用的稳定术语。具体教学解释仍以来源单元为准。
 
@@ -63,3 +63,10 @@
 | concurrency-safe | 某个工具在当前已验证输入下允许与相邻安全调用并发 | 工具名永久无副作用、Permission allow、Sandbox | M15 |
 | exclusive barrier | 必须等待前批完成并阻止后批越过的单工具批次 | 全局锁、所有工具永远串行 | M15/H2 |
 | ordered publication | 执行可乱序完成，但 outcome、context update 与 durable result 按原 tool-call 顺序提交 | 强制工具串行执行 | M15/H2 |
+| ResultBudgetLedger | H3 中跨模型迭代冻结 exact replacement decision 的 revisioned owner | durable tool output、全请求硬 token 上限 | M16/H3 |
+| Compact transaction | 从 immutable history 准备 summary/replacement，经 revision 与 journal 边界提交 | 原地截断、crash durability 已自动成立 | M17/H3 |
+| Instruction Pipeline | 把 source、trust、scope 和动态 delta 投影为一次请求可见 instruction view | system prompt、Permission enforcement、长期 Memory | M18/H3 |
+| Session Memory | 当前 project/session 的滚动 `summary.md`，主要服务 Session Memory compact | 跨 session Auto Memory、compact summary本身 | M19 |
+| Auto Memory | 按 canonical git root持久化的 topic files与 `MEMORY.md`索引 | Session Memory、Instruction、Transcript | M19 |
+| relevance recall | 从 topic header选择、限量读取并作为当前请求attachment投影 | 所有 memory永久注入 system prompt | M19 |
+| memory candidate | H3 clean-room中尚未 explicit accept、不可 recall 的观察 | Claude Code 当前已存在的统一状态机、accepted长期事实 | M19/H3 |

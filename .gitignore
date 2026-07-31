@@ -23,6 +23,8 @@ source-snapshot/*
 review-workspaces/*
 !review-workspaces/.gitkeep
 **/review-workspace/
+**/teaching-gate-output.txt
+**/teaching-gate-error.txt
 tmp/*
 !tmp/.gitkeep
 

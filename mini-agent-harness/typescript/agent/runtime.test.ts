@@ -17,6 +17,8 @@ import {
 import { PolicyPermissionGate, type PermissionGate } from './permissions.ts'
 import {
   RequestProjector,
+  ResultBudgetLedger,
+  StaleReplacementRevisionError,
   type RequestProjectionPolicy,
 } from './requestProjector.ts'
 import {
@@ -603,6 +605,12 @@ test('deep-freezes nested model request data behind already-frozen message shell
     projectedCount: 3,
     omittedBeforeHistoryStart: 1,
     replacedToolResultCount: 1,
+    newlyReplacedToolResultCount: 0,
+    reappliedToolResultCount: 0,
+    frozenToolResultCount: 0,
+    aggregateBudgetGroupCount: 0,
+    overBudgetToolResultGroupCount: 0,
+    replacementRevision: 0,
     userContextInjected: true,
     strictValidation: 'passed',
   })
@@ -653,6 +661,107 @@ test('strict request validation rejects a history start at an orphan tool result
     tools: [{ name: 'inspect', description: 'Inspect', inputSchema: { type: 'object' } }],
     model: 'scripted-model',
   }, { historyStart: 2 }), /orphan or duplicate tool result/)
+})
+
+test('aggregate tool-result budget is stable and leaves durable output unchanged', () => {
+  const store = new ConversationStore()
+  const humanId = envelopeId('message-budget-human')
+  const assistantId = envelopeId('message-budget-assistant')
+  const calls = ['a', 'b', 'c'].map(id => toolUseId(`call-budget-${id}`))
+  store.append(0, [Object.freeze({
+    kind: 'human' as const,
+    id: humanId,
+    text: 'search in parallel',
+  })])
+  store.append(1, [Object.freeze({
+    kind: 'assistant' as const,
+    id: assistantId,
+    responseId: responseId('response-budget'),
+    parentId: humanId,
+    blocks: Object.freeze(calls.map(id => toolUseBlock(id, 'search', {}))),
+  })])
+  store.append(2, calls.map((id, index) => Object.freeze({
+    kind: 'tool-result' as const,
+    id: envelopeId(`message-budget-result-${index}`),
+    toolUseId: id,
+    output: String.fromCharCode(65 + index).repeat(80),
+    isError: false,
+    parentId: assistantId,
+  })))
+  const catalog = new CapabilityCatalog()
+  const capabilities = new CapabilityProjector().project(
+    catalog.publish([{
+      name: 'search',
+      description: 'Search data',
+      source: 'builtin',
+      priority: 100,
+    }]),
+    {
+      boundary: 'request-budget',
+      mode: 'headless',
+      provider: 'scripted',
+      model: 'scripted-model',
+    },
+  )
+  const requestContext = createRequestContext(
+    createRuntimeContext({
+      runtimeId: 'runtime-budget',
+      configurationRevision: 1,
+      modelAdapter: 'scripted',
+      startedAt: 1,
+    }),
+    createSessionStateStore({}),
+    'request-budget',
+  )
+  const ledger = new ResultBudgetLedger()
+  const projector = new RequestProjector(store, ledger)
+  const input = {
+    requestContext,
+    conversation: store.snapshot(),
+    capabilities,
+    tools: [{
+      name: 'search',
+      description: 'Search data',
+      inputSchema: { type: 'object' },
+    }],
+    model: 'scripted-model',
+  }
+  const policy = { maxToolResultGroupChars: 220, toolResultPreviewChars: 4 }
+  const first = projector.projectWithReport(input, policy)
+  const second = projector.projectWithReport(input, policy)
+
+  assert.equal(first.report.newlyReplacedToolResultCount, 1)
+  assert.equal(first.report.aggregateBudgetGroupCount, 1)
+  assert.equal(first.report.overBudgetToolResultGroupCount, 0)
+  assert.equal(first.report.replacementRevision, 1)
+  assert.equal(second.report.newlyReplacedToolResultCount, 0)
+  assert.equal(second.report.reappliedToolResultCount, 1)
+  assert.deepEqual(first.request.messages, second.request.messages)
+  const durableOutputs = store.snapshot().messages
+    .filter(message => message.kind === 'tool-result')
+    .map(message => message.output)
+  assert.deepEqual(durableOutputs, [
+    'A'.repeat(80),
+    'B'.repeat(80),
+    'C'.repeat(80),
+  ])
+})
+
+test('replacement ledger rejects a stale metadata writer', () => {
+  const ledger = new ResultBudgetLedger()
+  const snapshot = ledger.snapshot()
+  const first = {
+    expectedRevision: snapshot.revision,
+    seenIds: new Set(['call-a']),
+    replacements: new Map([['call-a', 'preview-a']]),
+  }
+  const stale = {
+    expectedRevision: snapshot.revision,
+    seenIds: new Set(['call-b']),
+    replacements: new Map([['call-b', 'preview-b']]),
+  }
+  assert.equal(ledger.commit(first), 1)
+  assert.throws(() => ledger.commit(stale), StaleReplacementRevisionError)
 })
 
 test('cancellation during the model call prevents another request', async () => {

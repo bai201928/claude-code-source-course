@@ -25,6 +25,7 @@ export type RequestProjectionPolicy = Readonly<{
   historyStart?: number
   userContext?: string
   maxToolResultChars?: number
+  maxToolResultGroupChars?: number
   toolResultPreviewChars?: number
 }>
 
@@ -34,6 +35,12 @@ export type RequestProjectionReport = Readonly<{
   projectedCount: number
   omittedBeforeHistoryStart: number
   replacedToolResultCount: number
+  newlyReplacedToolResultCount: number
+  reappliedToolResultCount: number
+  frozenToolResultCount: number
+  aggregateBudgetGroupCount: number
+  overBudgetToolResultGroupCount: number
+  replacementRevision: number
   userContextInjected: boolean
   strictValidation: 'passed'
 }>
@@ -44,12 +51,67 @@ export type RequestProjectionResult = Readonly<{
 }>
 
 export class RequestProjectionError extends Error {}
+export class StaleReplacementRevisionError extends Error {}
+
+export type ResultBudgetLedgerSnapshot = Readonly<{
+  revision: number
+  seenIds: ReadonlySet<string>
+  replacements: ReadonlyMap<string, string>
+}>
+
+export type ResultBudgetLedgerChange = Readonly<{
+  expectedRevision: number
+  seenIds: ReadonlySet<string>
+  replacements: ReadonlyMap<string, string>
+}>
+
+export class ResultBudgetLedger {
+  #revision = 0
+  readonly #seenIds = new Set<string>()
+  readonly #replacements = new Map<string, string>()
+
+  snapshot(): ResultBudgetLedgerSnapshot {
+    return Object.freeze({
+      revision: this.#revision,
+      seenIds: new Set(this.#seenIds),
+      replacements: new Map(this.#replacements),
+    })
+  }
+
+  commit(change: ResultBudgetLedgerChange): number {
+    if (change.expectedRevision !== this.#revision) {
+      throw new StaleReplacementRevisionError(
+        `replacement revision ${change.expectedRevision} is stale; current=${this.#revision}`,
+      )
+    }
+    let changed = false
+    for (const id of change.seenIds) {
+      if (!this.#seenIds.has(id)) {
+        this.#seenIds.add(id)
+        changed = true
+      }
+    }
+    for (const [id, replacement] of change.replacements) {
+      if (this.#replacements.get(id) !== replacement) {
+        this.#replacements.set(id, replacement)
+        changed = true
+      }
+    }
+    if (changed) this.#revision += 1
+    return this.#revision
+  }
+}
 
 export class RequestProjector {
   readonly #store: ConversationStore
+  readonly #resultBudgetLedger: ResultBudgetLedger
 
-  constructor(store: ConversationStore) {
+  constructor(
+    store: ConversationStore,
+    resultBudgetLedger: ResultBudgetLedger = new ResultBudgetLedger(),
+  ) {
     this.#store = store
+    this.#resultBudgetLedger = resultBudgetLedger
   }
 
   project(input: ProjectionInput, policy: RequestProjectionPolicy = {}): ModelRequest {
@@ -66,10 +128,15 @@ export class RequestProjector {
       throw new RequestProjectionError('historyStart must be a valid durable message index')
     }
     const maxToolResultChars = policy.maxToolResultChars ?? Number.POSITIVE_INFINITY
+    const maxToolResultGroupChars =
+      policy.maxToolResultGroupChars ?? Number.POSITIVE_INFINITY
     const previewChars = policy.toolResultPreviewChars ?? 96
     if (
       (maxToolResultChars !== Number.POSITIVE_INFINITY &&
         (!Number.isInteger(maxToolResultChars) || maxToolResultChars < 1)) ||
+      (maxToolResultGroupChars !== Number.POSITIVE_INFINITY &&
+        (!Number.isInteger(maxToolResultGroupChars) ||
+          maxToolResultGroupChars < 1)) ||
       !Number.isInteger(previewChars) || previewChars < 0
     ) {
       throw new RequestProjectionError('tool-result preview limits must be non-negative integers')
@@ -82,7 +149,7 @@ export class RequestProjector {
     }
     const selected = input.conversation.messages.slice(historyStart)
     let replacedToolResultCount = 0
-    const projected = selected.map(message => {
+    const perResultProjected = selected.map(message => {
       const modelMessage = projectMessage(message)
       if (
         modelMessage.role !== 'tool' ||
@@ -95,11 +162,21 @@ export class RequestProjector {
         content: `[tool result ${modelMessage.toolCallId} preview: ${modelMessage.content.length} chars; prefix=${JSON.stringify(prefix)}]`,
       })
     })
+    const ledgerSnapshot = this.#resultBudgetLedger.snapshot()
+    const aggregate = maxToolResultGroupChars === Number.POSITIVE_INFINITY
+      ? emptyAggregateProjection(perResultProjected, ledgerSnapshot.revision)
+      : applyAggregateResultBudget(
+          perResultProjected,
+          ledgerSnapshot,
+          maxToolResultGroupChars,
+          previewChars,
+        )
     const userContext = policy.userContext?.trim()
     const messages = userContext
-      ? insertUserContext(projected, `<system-reminder>\n${userContext}\n</system-reminder>`)
-      : projected
+      ? insertUserContext(aggregate.messages, `<system-reminder>\n${userContext}\n</system-reminder>`)
+      : aggregate.messages
     assertStrictPairing(messages)
+    const replacementRevision = this.#resultBudgetLedger.commit(aggregate.change)
     const request = deepFreeze({
       requestId: input.requestContext.requestId,
       model: input.model,
@@ -113,12 +190,163 @@ export class RequestProjector {
         selectedCount: selected.length,
         projectedCount: messages.length,
         omittedBeforeHistoryStart: historyStart,
-        replacedToolResultCount,
+        replacedToolResultCount:
+          replacedToolResultCount +
+          aggregate.newlyReplacedCount +
+          aggregate.reappliedCount,
+        newlyReplacedToolResultCount: aggregate.newlyReplacedCount,
+        reappliedToolResultCount: aggregate.reappliedCount,
+        frozenToolResultCount: aggregate.frozenCount,
+        aggregateBudgetGroupCount: aggregate.groupCount,
+        overBudgetToolResultGroupCount: aggregate.overBudgetGroupCount,
+        replacementRevision,
         userContextInjected: Boolean(userContext),
         strictValidation: 'passed' as const,
       },
     })
   }
+}
+
+type AggregateProjection = Readonly<{
+  messages: readonly ModelMessage[]
+  newlyReplacedCount: number
+  reappliedCount: number
+  frozenCount: number
+  groupCount: number
+  overBudgetGroupCount: number
+  change: ResultBudgetLedgerChange
+}>
+
+function emptyAggregateProjection(
+  messages: readonly ModelMessage[],
+  revision: number,
+): AggregateProjection {
+  return {
+    messages,
+    newlyReplacedCount: 0,
+    reappliedCount: 0,
+    frozenCount: 0,
+    groupCount: 0,
+    overBudgetGroupCount: 0,
+    change: {
+      expectedRevision: revision,
+      seenIds: new Set(),
+      replacements: new Map(),
+    },
+  }
+}
+
+function applyAggregateResultBudget(
+  messages: readonly ModelMessage[],
+  ledger: ResultBudgetLedgerSnapshot,
+  limit: number,
+  previewChars: number,
+): AggregateProjection {
+  const projected = [...messages]
+  const groups: number[][] = []
+  let current: number[] = []
+  const flush = () => {
+    if (current.length > 0) groups.push(current)
+    current = []
+  }
+  messages.forEach((message, index) => {
+    if (message.role === 'tool') current.push(index)
+    else flush()
+  })
+  flush()
+
+  const seenDelta = new Set<string>()
+  const replacementDelta = new Map<string, string>()
+  let newlyReplacedCount = 0
+  let reappliedCount = 0
+  let frozenCount = 0
+  let overBudgetGroupCount = 0
+
+  for (const group of groups) {
+    const fresh: Array<{
+      index: number
+      callId: string
+      content: string
+    }> = []
+    for (const index of group) {
+      const message = projected[index]
+      if (!message || message.role !== 'tool') continue
+      const prior = ledger.replacements.get(message.toolCallId)
+      if (prior !== undefined) {
+        projected[index] = Object.freeze({ ...message, content: prior })
+        reappliedCount += 1
+      } else if (ledger.seenIds.has(message.toolCallId)) {
+        frozenCount += 1
+      } else {
+        fresh.push({ index, callId: message.toolCallId, content: message.content })
+      }
+    }
+
+    let projectedChars = group.reduce((total, index) => {
+      const message = projected[index]
+      return total + (message?.role === 'tool' ? message.content.length : 0)
+    }, 0)
+    const remaining = [...fresh]
+    while (projectedChars > limit && remaining.length > 0) {
+      const ranked = remaining
+        .map(candidate => {
+          const replacement = toolResultPreview(
+            candidate.callId,
+            candidate.content,
+            previewChars,
+          )
+          return {
+            candidate,
+            replacement,
+            reduction: candidate.content.length - replacement.length,
+          }
+        })
+        .sort(
+          (a, b) =>
+            b.reduction - a.reduction ||
+            a.candidate.callId.localeCompare(b.candidate.callId),
+        )
+      const choice = ranked[0]
+      if (!choice || choice.reduction <= 0) break
+      remaining.splice(
+        remaining.findIndex(item => item.callId === choice.candidate.callId),
+        1,
+      )
+      projected[choice.candidate.index] = Object.freeze({
+        role: 'tool' as const,
+        toolCallId: choice.candidate.callId,
+        content: choice.replacement,
+      })
+      projectedChars -= choice.reduction
+      replacementDelta.set(choice.candidate.callId, choice.replacement)
+      newlyReplacedCount += 1
+    }
+    for (const candidate of fresh) seenDelta.add(candidate.callId)
+    if (projectedChars > limit) overBudgetGroupCount += 1
+  }
+
+  return {
+    messages: projected,
+    newlyReplacedCount,
+    reappliedCount,
+    frozenCount,
+    groupCount: groups.length,
+    overBudgetGroupCount,
+    change: {
+      expectedRevision: ledger.revision,
+      seenIds: seenDelta,
+      replacements: replacementDelta,
+    },
+  }
+}
+
+function toolResultPreview(
+  toolCallId: string,
+  content: string,
+  previewChars: number,
+): string {
+  const prefix = content.slice(0, previewChars)
+  return `[tool result ${toolCallId} preview: ${content.length} chars; prefix=${JSON.stringify(prefix)}]`
 }
 
 function insertUserContext(messages: readonly ModelMessage[], content: string): ModelMessage[] {

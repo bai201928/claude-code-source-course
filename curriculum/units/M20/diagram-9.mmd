@@ -1,0 +1,7 @@
+flowchart LR
+  ASK["permission = ask"] --> UI{"有交互表面?"}
+  UI -->|"yes"| RACE["Hook / classifier / user race"]
+  UI -->|"no"| PR["PermissionRequest Hook"]
+  PR -->|"allow/deny"| OUT["explicit decision"]
+  PR -->|"no decision / failure"| FC["auto-deny"]
+  RACE --> OUT

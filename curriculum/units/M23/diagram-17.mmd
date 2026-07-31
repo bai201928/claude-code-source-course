@@ -1,0 +1,7 @@
+flowchart TD
+  SEND["Mailbox.send(message)"] --> WAIT{"matching waiter?"}
+  WAIT -->|"yes"| RESOLVE["resolve one waiter\nmessage 不入 queue"]
+  WAIT -->|"no"| PUSH["push memory queue"]
+  PUSH --> POLL["poll/receive removes item"]
+  RESOLVE --> LOST["process exit 后不可恢复"]
+  POLL --> LOST

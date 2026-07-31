@@ -1,0 +1,7 @@
+flowchart LR
+  REMOTE["server=demo server / tool=read"] --> NORM["normalize names"]
+  NORM --> MODEL["model name: mcp__demo_server__read"]
+  REMOTE --> INFO["mcpInfo: original server/tool"]
+  MODEL --> CATALOG["request tool schema"]
+  INFO --> PERM["fully-qualified Permission identity"]
+  CATALOG --> CALL["remote tools/call name=read"]

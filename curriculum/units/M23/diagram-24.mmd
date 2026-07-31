@@ -1,0 +1,6 @@
+stateDiagram-v2
+  [*] --> scheduled
+  scheduled --> pending_trigger: poll(due)
+  pending_trigger --> pending_trigger: crash / recover / redeliver same id
+  pending_trigger --> removed: commit one-shot
+  pending_trigger --> scheduled: commit recurring

@@ -1,0 +1,7 @@
+flowchart TD
+  ANN["remote annotations"] --> CLASS["read-only / destructive / open-world classification"]
+  CLASS --> SCHED["scheduler hint"]
+  CLASS --> PERM["Permission context"]
+  POLICY["local policy / user approval"] --> PERM
+  PERM --> EXEC{"allowed?"}
+  ANN -. "不是真实性证明" .-> POLICY

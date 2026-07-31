@@ -1,0 +1,7 @@
+flowchart LR
+  HIST["parent history"] --> PREFIX["shared prefix"]
+  ASSIST["assistant: all tool_use blocks"] --> PREFIX
+  PREFIX --> R1["placeholder results for every tool_use"]
+  R1 --> D1["child A directive"]
+  PREFIX --> R2["same placeholder results"]
+  R2 --> D2["child B directive"]

@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant P as Permission
+  participant A as AbortSignal
+  participant E as Executor
+  participant T as tool.call
+  P-->>E: allow
+  A-->>E: abort arrives
+  Note over E: 当前快照没有统一 final pre-effect recheck
+  E->>T: 仍可能进入 handler
+  Note over T: 是否及时停止取决于具体工具协作

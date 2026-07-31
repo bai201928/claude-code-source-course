@@ -1,0 +1,6 @@
+flowchart TD
+  READ["read unread message"] --> EFFECT["perform side effect"]
+  READ -->|"先 mark read 后 crash"| LOSS["消息看似完成，副作用未发生"]
+  EFFECT -->|"副作用完成后 crash"| DUP["消息仍 unread，恢复后可能重做"]
+  DUP --> NEED["message ID + idempotency + explicit ack"]
+  LOSS --> NEED

@@ -1,0 +1,13 @@
+flowchart LR
+  CFG["MCP config"] --> TRANSPORT["stdio / HTTP / SSE / WS / SDK transport"]
+  TRANSPORT --> INIT["Client.connect / initialize"]
+  INIT --> CAPS["server capabilities"]
+  CAPS --> LIST["tools/resources/prompts list"]
+  LIST --> ADAPT["Claude Code Tool / Command / Resource"]
+  ADAPT --> SNAP["当前模型请求能力快照"]
+  SNAP --> CALL["Permission -> tools/call"]
+  CALL --> RESULT["remote result -> paired tool_result"]
+  CAPS --> NOTIFY["list_changed"]
+  NOTIFY --> LIST
+  CALL --> DROP["abort / timeout / disconnect / session expiry"]
+  DROP --> TRANSPORT

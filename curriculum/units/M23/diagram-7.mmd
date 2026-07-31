@@ -1,0 +1,9 @@
+sequenceDiagram
+  participant W as worker
+  participant T as work-item file
+  participant L as leader/cleanup
+  W->>T: owner=worker
+  W--xW: crash
+  Note over T: owner 仍是 worker
+  L->>T: 只有检测并执行 unassign 后才释放
+  T-->>L: owner=undefined, status=pending

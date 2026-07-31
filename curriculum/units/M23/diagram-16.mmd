@@ -1,0 +1,9 @@
+flowchart TD
+  CREATE["TeamCreate"] --> CFG["team config.json"]
+  CREATE --> LEAD["team-lead@team identity"]
+  CREATE --> MEMBERS["member directory"]
+  CREATE --> TASKS["shared task-list directory"]
+  CREATE --> INBOX["team/name inbox files"]
+  MEMBERS --> ROUTE["backend / session / cwd / active state"]
+  TASKS --> OWNER["Work-item owner"]
+  INBOX --> COORD["messages + structured protocol"]

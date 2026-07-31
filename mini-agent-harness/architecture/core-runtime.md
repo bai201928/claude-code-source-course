@@ -36,6 +36,7 @@ The loop has one durable message owner. Each `ConversationStore` binds exactly o
 | Released S1 / M05-M09 | surface/core separation, configuration provenance, immutable request state, capability projection and budgeted lifecycle | H1 runtime shell around the H0 core |
 | Released S2 / M10-M15 | durable message ownership, request projection, provider boundary, run-channel separation, bounded stream lifecycle and ordered concurrent Tool Loop | H2 / Harness 0.3.0 single-agent vertical slice |
 | Released S3 / M16-M19 | aggregate budget, revision-checked Compact, scoped/trusted instruction snapshots and governed memory recall | H3 / Harness 0.4.0 Context and Memory milestone |
+| Released S4 / M20-M23 | Hook/Permission decision governance, extension registry, MCP session lifecycle and long-lived work coordination | H5 / Harness 0.5.0 extension and coordination milestone |
 
 M14 contributes a provider-neutral bounded stream contract and standalone assembly experiments. M15 contributes the explicit execution plan, bounded safe batches, exclusive barriers, ordered publication and exactly-once outcomes. Provider-specific SSE assembly and Runtime streaming consumption remain deferred.
 
@@ -57,6 +58,15 @@ M14 contributes a provider-neutral bounded stream contract and standalone assemb
 | Per-request instruction view | `InstructionPipeline` | model request composer | immutable scope/trust projection |
 | Memory candidates and accepted records | `MemoryStore` | memory projector, governance | expected-revision lifecycle transition |
 | Per-request accepted-memory view | `MemoryProjector` | model request composer | scope, relevance, item and character budget |
+| Tool input/decision revisions | `ExtensionDecisionPipeline` | tool registry, scheduler, trace | ordered Hook/rewrite/revalidation/policy boundary |
+| Extension bundle membership | `ExtensionRegistry` | capability adapter, execution acquirer | expected-revision all-or-nothing publication |
+| MCP generation and remote tool snapshot | `McpSession` | capability composer, remote caller | connect/refresh/degrade/disconnect state machine |
+| Work responsibility and claim lease | `WorkItemStore` | coordinator, worker | expected revision plus token/expiry fencing |
+| Live execution and cancellation controller | `RuntimeExecutionRegistry` | supervisor, observers | launch/cancel/terminal transition |
+| Team/member identity | `TeamDirectory` | mailbox and shutdown coordinator | revisioned membership/lifecycle publication |
+| Delivery and acknowledgment state | `AcknowledgedMailbox` | sender, recipient | message ID, sequence, redelivery and explicit ack |
+| Correlated shutdown request | `ShutdownCoordinator` | team supervisor | request/approve/reject/complete transition |
+| Schedule and pending trigger | `DurableScheduler` | scheduler adapter, recovery | stable trigger creation and explicit commit |
 | Current model iteration | `AgentRuntime` | trace/event observers | single-flight run |
 | Model-visible tools | `CapabilitySnapshot` | request projector, registry | new iteration boundary |
 | Tool handlers | `AgentToolRegistry` | runtime | bootstrap registration |
@@ -88,6 +98,22 @@ H3-3 adds an independent `InstructionCatalog` and `InstructionPipeline`. A sourc
 H3-4 adds an independent `MemoryStore` and `MemoryProjector`. Observations enter as candidates and remain invisible until an explicit revision-gated acceptance. Project/session scope, provenance, retention and superseded/expired states belong to the Store; the Projector derives one deterministic, item/character-bounded request view. Memory Trace contains only operation metadata, IDs, revision and scope. This state machine is a clean-room governance design: the verified Claude Code snapshot has Session Memory, Auto Memory topic/index files, relevance attachments and Auto Dream, but not this unified candidate/accepted store.
 
 Instruction and memory views are currently explicit composition inputs rather than hidden `AgentRuntime.submit()` side effects. This keeps their revisions and failure policies observable; a caller can place the projected text into the existing request-only context boundary. Automatic discovery, persistence and request wiring remain later integration work.
+
+## Extension governance
+
+H4-1 inserts `ExtensionDecisionPipeline` into the existing tool registry. One call carries an immutable input revision through ordered pre hooks, schema and semantic revalidation, permission policy, an optional ask resolver, a final pre-effect cancellation check and post hooks. A Hook allow cannot override policy deny; every rewrite is revalidated and re-authorized. Post hooks may stop the next model iteration but cannot claim to roll back the completed tool effect. Runtime trace receives only revision/evidence counts and continuation state.
+
+H4-2 keeps extension delivery out of the Tool Loop. `ExtensionRegistry` publishes a complete immutable snapshot from full source identity, trust policy and namespaced components. Conflicts reject the whole publication. Unload removes new snapshot membership and prevents an old snapshot from acquiring a new execution, while an already acquired lease drains cooperatively. Real marketplace fetch, repository checkout, signature infrastructure and component adapters remain outside this reference registry.
+
+H4-3 models MCP above an injected `McpTransport`. `McpSession` owns handshake, server-qualified tool snapshot, generation/revision, list-change refresh, degraded state, disconnect and retry policy. Local abort is passed to the adapter but is never described as remote rollback. A lost session defaults to indeterminate; one recovery attempt is allowed only by explicit policy and reuses the stable idempotency key. The reference does not hand-write JSON-RPC or implement production stdio/HTTP/OAuth transports.
+
+## Work coordination
+
+H5 separates long-lived responsibility from live execution. `WorkItemStore` owns blockers, revision and an expiring claim lease; `RuntimeExecutionRegistry` owns the actual AbortController and linked/detached cancellation. A stale lease token cannot complete reclaimed work, and a detached execution still requires an explicit supervisor stop path.
+
+`TeamDirectory`, `AcknowledgedMailbox` and `ShutdownCoordinator` form a small coordination plane. Team identity is not an array of Promises. Mail is at-least-once until explicit ack, keyed by message ID and ordered per recipient, but ack remains separate from the recipient's business effect. Shutdown has a correlated request/approval/rejection/completed lifecycle rather than a direct leader mutation.
+
+`DurableScheduler` is an H6 foundation inside the H5 release. Polling materializes a stable pending trigger before external handling; commit removes a one-shot or advances recurrence. Exported state can recover and redeliver the same trigger ID. This improves deduplication but does not make an external side effect exactly-once. The current implementation is persistence-neutral and in-process; database/queue adapters, leader election, Transcript reconciliation and full resume remain deferred.
 
 ## Provider boundary
 
@@ -162,6 +188,11 @@ Implemented now:
 - bounded concurrent single-agent tool loop with safe batches, exclusive barriers and ordered publication;
 - read/search/list tools and explicitly granted command executables;
 - permission denial, cancellation, error feedback and max turns;
+- ordered Hook/rewrite/policy decisions with revalidation, final cancel gate and post-effect continuation;
+- revisioned extension publication, trust boundary, conflict rejection, immutable snapshot and execution lease;
+- transport-neutral MCP handshake, generation/revision, qualified tool snapshot, fail-closed refresh and explicit recovery policy;
+- separate WorkItem and RuntimeExecution owners with lease/heartbeat/reclaim/fencing and linked/detached cancellation;
+- team identity, acknowledged at-least-once mailbox, correlated shutdown and stable pending scheduler triggers;
 - interactive/headless CLI, JSON and event output;
 - structured trace and budgeted lifecycle flush;
 - deterministic TypeScript tests and Python behavior-contract mirror.
@@ -171,8 +202,9 @@ Explicitly deferred:
 - Provider-specific SSE streaming assembly and Runtime streaming assistant/tool consumption;
 - external result storage, crash-durable Compact records and transcript resume;
 - persistent/vector memory, PII/DLP enforcement, distributed writers and automatic Runtime memory wiring;
-- Hook, Skill, MCP and Plugin execution;
-- subagents and teams;
+- filesystem Skill/Plugin discovery, marketplace fetch, component loading and automatic Runtime capability wiring;
+- official MCP transport/OAuth, Resource/Prompt adapters and automatic Runtime wiring;
+- process-backed Subagents/Teams, durable mailbox storage and distributed coordination;
 - transcript persistence, resume and crash recovery;
 - real Sandbox or distributed execution;
 - production OpenTelemetry, quota and cost governance.

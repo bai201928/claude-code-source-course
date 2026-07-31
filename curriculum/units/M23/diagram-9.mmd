@@ -1,0 +1,11 @@
+flowchart LR
+  CLAIM["Work-item owner=researcher"] --> LAUNCH["register Runtime Task"]
+  LAUNCH --> CTRL["AbortController"]
+  LAUNCH --> OUT["output file / progress"]
+  LAUNCH --> RUN["runAgent async iterator"]
+  RUN -->|"normal"| COMPLETE["Runtime completed"]
+  RUN -->|"error"| FAILED["Runtime failed"]
+  CTRL -->|"abort"| KILLED["Runtime killed"]
+  COMPLETE -. "业务提交" .-> WIDONE["Work-item completed"]
+  FAILED -. "release/retry policy" .-> WI["Work-item pending/in_progress"]
+  KILLED -. "release/retry policy" .-> WI

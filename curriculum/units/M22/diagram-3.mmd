@@ -1,0 +1,7 @@
+flowchart TD
+  REQ["transport request"] --> METHOD{"GET long-lived SSE?"}
+  METHOD -->|"yes"| STREAM["不套普通 request timeout"]
+  METHOD -->|"no"| CTRL["每次创建 AbortController + timer"]
+  CTRL --> LINK["桥接 parent signal"]
+  LINK --> FETCH["fetch with fresh signal"]
+  FETCH --> CLEAN["clear timer + remove listener"]

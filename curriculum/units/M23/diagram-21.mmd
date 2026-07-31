@@ -1,0 +1,10 @@
+flowchart TD
+  START["scheduler start"] --> TRY["O_EXCL create lock"]
+  TRY -->|"success"| OWNER["owner: process file-backed tasks"]
+  TRY -->|"exists"| PID{"existing PID live?"}
+  PID -->|"yes"| PASSIVE["passive + periodic probe"]
+  PID -->|"no/corrupt"| STALE["unlink stale lock"]
+  STALE --> RACE["exclusive create race"]
+  RACE -->|"win"| OWNER
+  RACE -->|"lose"| PASSIVE
+  SESSION["session-only task"] --> LOCAL["每个进程只处理自己的 memory store"]

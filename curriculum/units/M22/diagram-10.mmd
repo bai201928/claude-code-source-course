@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant S as MCP server
+  participant H as notification handler
+  participant C as list cache
+  participant A as AppState/server registry
+  participant R1 as 已构造 request R1
+  participant R2 as 下一 request R2
+  S-->>H: tools/list_changed
+  H->>C: delete(serverName)
+  H->>S: tools/list
+  S-->>H: new tool list
+  H->>A: updateServer(new tools)
+  R1-->>R1: 旧 schema 不被原地改写
+  A-->>R2: 新能力装配

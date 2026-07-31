@@ -1,0 +1,8 @@
+flowchart TD
+  START["getTaskListId"] --> ENV{"显式 task list?"}
+  ENV -->|"yes"| E["explicit id"]
+  ENV -->|"no"| IN{"in-process teammate?"}
+  IN -->|"yes"| T1["teammate context team"]
+  IN -->|"no"| TEAM{"process / leader team?"}
+  TEAM -->|"yes"| T2["team name"]
+  TEAM -->|"no"| S["session id"]

@@ -1,0 +1,8 @@
+flowchart TD
+  PRE["PreToolUse result"] --> DENY{"deny / block / stop / abort?"}
+  DENY -->|"yes"| NO["当前 handler 不执行"]
+  DENY -->|"no"| PC{"preventContinuation?"}
+  PC -->|"yes or no"| EXEC["当前 handler 可执行"]
+  EXEC --> SIDE["副作用已发生"]
+  SIDE --> CONT{"是否继续 Agent"}
+  PC -. "只影响这里" .-> CONT

@@ -1,0 +1,10 @@
+flowchart TD
+  RAW["model raw input"] --> PARSED["schema-parsed input"]
+  PARSED --> CALL0["initial callInput"]
+  PARSED --> CLONE["shallow observable clone"]
+  CLONE --> BACK["backfillObservableInput"]
+  BACK --> OBS["Hook / Permission / SDK / Transcript"]
+  OBS -->|"no rewrite"| CALL0
+  OBS -->|"fresh updatedInput"| CALL1["replacement callInput"]
+  CALL0 --> HANDLER["tool.call"]
+  CALL1 --> HANDLER

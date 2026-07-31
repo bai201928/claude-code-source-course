@@ -1,6 +1,6 @@
 # Claude Code CLI 源码教材全课程设计包
 
-状态：`S3 已发布，M20-M27 按价值优先继续实施`
+状态：`S4 已发布，M24-M27 按价值优先继续实施`
 
 最后校准：`2026-07-31`
 
@@ -87,7 +87,7 @@ flowchart TD
 | S1 运行壳 | M05-M09 | Surface、配置、状态、能力、生命周期 | H1 | 已发布 |
 | S2 单 Agent 主循环 | M10-M15 | 消息、Query、请求、模型流、Tool Loop | H2 / 0.3.0 | 已发布 |
 | S3 Context 与记忆 | M16-M19 | 可控上下文、压缩事务、指令、记忆 | H3 / 0.4.0 | 已发布 |
-| S4 扩展、任务与多 Agent | M20-M23 | 执行治理、扩展 ABI、Task、Subagent/Team | H4-H5 | 待生成 |
+| S4 扩展、任务与多 Agent | M20-M23 | 执行治理、扩展 ABI、Task、Subagent/Team | H4-H5 / 0.5.0 | 已发布 |
 | S5 恢复与生产治理 | M24-M27 | Transcript/Resume、安全、观测、部署 | H6-H7 | 待生成 |
 
 S3、S4、S5 各自完成时更新根 README、Mini Agent Harness README、契约、架构、全局索引和累计回归。单元在阶段原子发布前只到 `release-candidate`，不提前创建 `final.md`。
@@ -312,10 +312,10 @@ flowchart LR
 | H0 | M01-M04 | message/state/event/cancel/cleanup/trace | 已发布 |
 | H1 | M05-M09 | Surface/config/context/capability/lifecycle | 已发布 |
 | H2 / 0.3.0 | M10-M15 | ConversationStore/request/provider/stream/ToolScheduler | 已发布 |
-| H3 | M16-M19 | aggregate budget、CompactTransaction、InstructionPipeline、MemoryStore | 待实现 |
-| H4 | M20-M22 | Tool/Hook decision ABI、Skill/Plugin registry、MCP session/lifecycle | 待实现 |
-| H5 | M23 | TaskStore、lease、child scope、TeamDirectory、Mailbox | 待实现 |
-| H6 | M23-M24 | DurableScheduler、TranscriptStore、RecoveryReducer、ResumeCoordinator | 待实现 |
+| H3 | M16-M19 | aggregate budget、CompactTransaction、InstructionPipeline、MemoryStore | 已发布 / 0.4.0 |
+| H4 | M20-M22 | Tool/Hook decision ABI、Skill/Plugin registry、MCP session/lifecycle | 已发布于 0.5.0 |
+| H5 | M23 | TaskStore、lease、child scope、TeamDirectory、Mailbox | 已发布 / 0.5.0 |
+| H6 | M23-M24 | DurableScheduler、TranscriptStore、RecoveryReducer、ResumeCoordinator | scheduler foundation 已完成，其余待 M24 |
 | H7 | M25-M27 | Sandbox/Worker、policy、observability、quota、部署与回滚 | 待实现 |
 
 每次合入记录新增契约、状态 owner、失败语义、兼容影响和累计回归。`merge`、`defer`、`reject` 由证据与架构决定。H3-H7 是能力里程碑，不要求一一对应课程阶段。

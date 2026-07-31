@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant A as Agent A
+  participant L as target task lock
+  participant F as task JSON
+  participant D as dependency files
+  A->>F: existence check
+  A->>L: acquire target lock
+  A->>F: re-read target
+  A->>A: owner/completed check
+  A->>D: list unresolved blockers
+  A->>F: updateTaskUnsafe(owner=A)
+  A->>L: release

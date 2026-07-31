@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant S1 as Sender A
+  participant S2 as Sender B
+  participant L as inbox file lock
+  participant F as recipient.json
+  participant R as Recipient
+  S1->>L: acquire
+  S1->>F: read + append + write
+  S1->>L: release
+  S2->>L: acquire
+  S2->>F: read + append + write
+  S2->>L: release
+  R->>F: read unread
+  R->>L: mark index/all read under lock

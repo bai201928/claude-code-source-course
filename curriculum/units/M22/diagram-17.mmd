@@ -1,0 +1,9 @@
+flowchart TD
+  CFG["tenant MCP config"] --> SDK["official SDK transport adapter"]
+  SDK --> SESS["Session Supervisor"]
+  SESS --> CAT["revisioned capability catalog"]
+  CAT --> POLICY["trust + permission + schema policy"]
+  POLICY --> AGENT["Agent request snapshot"]
+  AGENT --> EXEC["idempotent call envelope"]
+  EXEC --> SDK
+  SESS --> OBS["health / generation lag / reconnect / list errors"]

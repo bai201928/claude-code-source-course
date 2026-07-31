@@ -1,0 +1,7 @@
+flowchart TD
+  RS["remote JSON Schema"] --> MODEL["inputJSONSchema -> model request"]
+  OUT["model tool input"] --> LOCAL["MCPTool Zod passthrough object"]
+  LOCAL --> PERM["Hook + Permission"]
+  PERM --> RPC["tools/call(arguments)"]
+  RPC --> SERVER["server authoritative validation"]
+  MODEL -. "提示模型形状，不等于" .-> LOCAL

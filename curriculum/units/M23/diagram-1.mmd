@@ -1,0 +1,11 @@
+flowchart LR
+  PLAN["工作计划"] --> WI["Work-item Task\n持久化责任"]
+  WI -->|"claim owner"| LEASE["owner / lease"]
+  LEASE --> EXEC["Runtime Task\n活执行与取消"]
+  EXEC -->|"foreground / background"| SUB["Subagent"]
+  SUB --> TEAM["Team identity + shared task list"]
+  TEAM --> BOX["Mailbox delivery"]
+  BOX --> SHUT["shutdown handshake"]
+  SHUT --> DONE["Work-item completed"]
+  DONE --> CRON["Cron trigger\n产生下一份工作"]
+  CRON --> WI

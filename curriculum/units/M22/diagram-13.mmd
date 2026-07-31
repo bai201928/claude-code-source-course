@@ -1,0 +1,8 @@
+flowchart LR
+  USER["ESC / parent abort"] --> SIGNAL["AbortSignal"]
+  DEADLINE["request/tool timeout"] --> RACE["local Promise rejection"]
+  SIGNAL --> SDK["SDK/transport cancellation attempt"]
+  RACE --> LOCAL["local stop waiting"]
+  SDK --> LOCAL
+  REMOTE["remote handler"] -. "可能已发生副作用" .-> LOCAL
+  LOCAL --> PAIR["outer Tool loop pairs cancelled/error result"]

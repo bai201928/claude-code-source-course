@@ -1,0 +1,11 @@
+flowchart TD
+  INTENT["enabledPlugins / marketplace settings"] --> SP["source allow/block policy"]
+  SP -->|"blocked"| STOP["下载前拒绝"]
+  SP -->|"allowed"| FETCH["clone / copy / cache"]
+  FETCH --> MAN["plugin.json schema"]
+  MAN --> PATH["relative path + base containment"]
+  PATH --> CMDS["commands / skills"]
+  PATH --> AG["agents"]
+  PATH --> HK["hooks"]
+  PATH --> MCP["MCP"]
+  PATH --> LSP["LSP"]

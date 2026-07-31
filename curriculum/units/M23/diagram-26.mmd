@@ -1,0 +1,6 @@
+flowchart LR
+  HYP["写下 owner 保证"] --> INJECT["stale writer / parent cancel / crash"]
+  INJECT --> OBS["观察 revision + token + messageId + triggerId"]
+  OBS --> BAD{"旧 owner 能提交?"}
+  BAD -->|"yes"| REPAIR["fencing / ack / pending commit"]
+  BAD -->|"no"| BOUND["记录保证边界"]

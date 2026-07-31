@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant A as Worker A
+  participant S as WorkItemStore
+  participant B as Worker B
+  A->>S: claim -> token L1
+  A--xA: pause / network partition
+  S->>S: expiresAt reached, reclaim
+  B->>S: claim -> token L2
+  A->>S: complete(token L1)
+  S-->>A: stale lease rejected
+  B->>S: complete(token L2)
+  S-->>B: completed

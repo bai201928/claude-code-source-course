@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Literal, Protocol, TypeAlias
 
+from extension_decision import DecisionEvidence, ExtensionDecisionPipeline
+
 from compact import (
     CompactCommitSummary,
     CompactCoordinator,
@@ -275,9 +277,17 @@ class PermissionDecision:
 
 
 class PermissionDeniedError(RuntimeError):
-    def __init__(self, decision: PermissionDecision) -> None:
+    def __init__(
+        self,
+        decision: PermissionDecision,
+        *,
+        input_revision: int = 0,
+        evidence_count: int = 0,
+    ) -> None:
         super().__init__(decision.reason)
         self.decision = decision
+        self.input_revision = input_revision
+        self.evidence_count = evidence_count
 
 
 class PermissionGate:
@@ -340,6 +350,9 @@ class AgentTool:
     permission_request: PermissionRequestFactory
     is_concurrency_safe: ConcurrencyClassifier | None = None
     context_update: ContextUpdateFactory | None = None
+    validate_input: Callable[
+        [Mapping[str, object]], object | Awaitable[object]
+    ] | None = None
 
 
 @dataclass(frozen=True)
@@ -347,11 +360,17 @@ class ToolDispatchResult:
     decision: PermissionDecision
     output: object
     context_update: Mapping[str, object] | None = None
+    continue_conversation: bool = True
+    decision_evidence: tuple[DecisionEvidence, ...] = ()
+    input_revision: int = 0
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(
+        self, decision_pipeline: ExtensionDecisionPipeline | None = None
+    ) -> None:
         self._tools: dict[str, AgentTool] = {}
+        self._decision_pipeline = decision_pipeline or ExtensionDecisionPipeline()
 
     def register(self, tool: AgentTool) -> None:
         _require_identifier(tool.name, "tool name")
@@ -394,25 +413,49 @@ class ToolRegistry:
         tool_input: Mapping[str, object],
         context: ToolContext,
         gate: PermissionGate,
+        call_id: str | None = None,
     ) -> ToolDispatchResult:
         tool = self._tools.get(name)
         if tool is None:
             raise ToolExecutionError(f"tool has no executable handler: {name}")
-        frozen_input = _freeze_mapping(tool_input)
-        _validate_tool_input(frozen_input, tool.input_schema)
-        request = tool.permission_request(frozen_input)
-        decision = await _resolve_permission_decision(
-            gate.decide(request, context.signal),
-            context.signal,
+        prepared = await self._decision_pipeline.prepare(
+            call_id=call_id or f"direct:{name}",
+            tool_name=name,
+            tool_input=tool_input,
+            validate_schema=lambda candidate: _validate_tool_input(
+                candidate, tool.input_schema
+            ),
+            validate_semantics=tool.validate_input,
+            decide_policy=lambda candidate: _resolve_permission_decision(
+                gate.decide(tool.permission_request(candidate), context.signal),
+                context.signal,
+            ),
+            signal=context.signal,
+        )
+        decision = PermissionDecision(
+            prepared.decision.allowed, prepared.decision.reason
         )
         if not decision.allowed:
-            raise PermissionDeniedError(decision)
+            raise PermissionDeniedError(
+                decision,
+                input_revision=prepared.context.revision,
+                evidence_count=len(prepared.evidence),
+            )
         context.signal.throw_if_cancelled()
-        produced = tool.execute(frozen_input, context)
-        output = await produced if inspect.isawaitable(produced) else produced
-        context.signal.throw_if_cancelled()
+        try:
+            produced = tool.execute(prepared.context.input, context)
+            output = await produced if inspect.isawaitable(produced) else produced
+            context.signal.throw_if_cancelled()
+        except Exception:
+            await self._decision_pipeline.after(
+                prepared, succeeded=False, signal=context.signal
+            )
+            raise
+        post = await self._decision_pipeline.after(
+            prepared, succeeded=True, signal=context.signal
+        )
         context_update = (
-            tool.context_update(frozen_input, output)
+            tool.context_update(prepared.context.input, output)
             if tool.context_update is not None
             else None
         )
@@ -420,6 +463,9 @@ class ToolRegistry:
             decision,
             output,
             _freeze_mapping(context_update) if context_update is not None else None,
+            post.continue_conversation,
+            post.evidence,
+            prepared.context.revision,
         )
 
 
@@ -443,6 +489,9 @@ class ToolExecutionOutcome:
     is_error: bool
     reason: str
     context_update: Mapping[str, object] | None = None
+    continue_conversation: bool = True
+    input_revision: int = 0
+    decision_evidence_count: int = 0
 
 
 class ToolScheduler:
@@ -566,6 +615,7 @@ class ToolScheduler:
                 call.input,
                 ToolContext(signal, report_progress),
                 gate,
+                call.id,
             )
             signal.throw_if_cancelled()
             return ToolExecutionOutcome(
@@ -575,6 +625,9 @@ class ToolScheduler:
                 False,
                 dispatched.decision.reason,
                 dispatched.context_update,
+                dispatched.continue_conversation,
+                dispatched.input_revision,
+                len(dispatched.decision_evidence),
             )
         except asyncio.CancelledError:
             raise
@@ -588,6 +641,10 @@ class ToolScheduler:
                 _safe_error(error),
                 True,
                 error.decision.reason if denied else "tool-execution",
+                None,
+                True,
+                error.input_revision if denied else 0,
+                error.evidence_count if denied else 0,
             )
 
 
@@ -959,6 +1016,17 @@ class AgentRuntime:
 
                 expected_revision = self._conversation.revision
                 for outcome in outcomes:
+                    self._trace.record(
+                        run_id,
+                        "tool.decision",
+                        {
+                            "tool_name": outcome.call.name,
+                            "tool_use_id": outcome.call.id,
+                            "input_revision": outcome.input_revision,
+                            "evidence_count": outcome.decision_evidence_count,
+                            "continue_conversation": outcome.continue_conversation,
+                        },
+                    )
                     self._append_tool_result(
                         outcome.call.id,
                         outcome.output,
@@ -969,11 +1037,18 @@ class AgentRuntime:
                     )
                     expected_revision = self._conversation.revision
                     self._tool_finished(
-                        run_id, outcome.call, outcome.status, outcome.reason
+                        run_id,
+                        outcome.call,
+                        outcome.status,
+                        "policy-allowed"
+                        if outcome.status == "success"
+                        else outcome.status,
                     )
                 self._tool_context = next_tool_context
                 if signal.cancelled:
                     return self._cancelled(run_id, turns, usage, "tool")
+                if any(not outcome.continue_conversation for outcome in outcomes):
+                    return self._completed(run_id, turns, usage, response.text)
 
             self._trace.record(
                 run_id, "run.max-turns", {"max_turns": self._max_turns}

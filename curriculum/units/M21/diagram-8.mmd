@@ -1,0 +1,8 @@
+flowchart LR
+  CFG["userConfig"] --> SENS{"sensitive?"}
+  SENS -->|"否"| CONTENT["Skill / Agent content substitution"]
+  SENS -->|"是"| PLACE["descriptive placeholder"]
+  PLACE --> MODEL["model prompt"]
+  VAULT["secret store"] --> EXEC["trusted execution adapter"]
+  EXEC --> REMOTE["MCP / external service"]
+  EXEC --> TRACE["metadata-only trace"]

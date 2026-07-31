@@ -1,0 +1,8 @@
+flowchart TD
+  OBS["观察到 status"] --> Q1{"是哪一个 owner 的 status?"}
+  Q1 -->|"task-list JSON"| W["协作责任状态"]
+  Q1 -->|"AppState Runtime Task"| R["活执行状态"]
+  Q1 -->|"scheduler record"| C["触发状态"]
+  W --> GAP1["可有 owner 但无进程"]
+  R --> GAP2["可有进程但无 work item"]
+  C --> GAP3["可已到期但尚未创建执行"]

@@ -1,6 +1,6 @@
 # TypeScript 与 Node.js 难点索引
 
-状态：`S3 已发布`
+状态：`S4 已发布`
 
 | 难点 | 首次系统讲解 | 源码/机制强化 | 当前掌握边界 | 后续复用 |
 | --- | --- | --- | --- | --- |
@@ -49,5 +49,15 @@
 | transaction plan 与 discriminated recovery | M17 | CompactPlan、prepared/committed、recovery report | prepare/commit/恢复分层，in-memory不等于crash durable | Transcript、Task |
 | 路径正规化与稳定排序 | M18 | InstructionCatalog/Pipeline、scope prefix、dedupe | filesystem source与request view分权 | Skill、MCP、Plugin |
 | lifecycle union 与 bounded projection | M19 | candidate/accepted/rejected/superseded/expired | 状态迁移、scope、retention和recall budget协作 | Task、Team、治理 |
+| immutable rewrite revision | M20 | Hook input rewrite、schema/semantic revalidation、policy rerun | 每次输入变化产生新 revision；allow 不绕过 policy | 企业 policy engine、approval |
+| ordered middleware 与 monotonic merge | M20 | Pre/Post Hook pipeline | 顺序影响 rewrite，decision 只能安全收紧；Post 不 rollback | Spring interceptor、事件处理 |
+| compound identity 与 atomic publication | M21 | source key、namespace、bundle conflict、snapshot | 物化身份与可见名分离；冲突失败不部分提交 | Plugin registry、供应链 |
+| execution lease 与 snapshot lifetime | M21 | old snapshot acquire gate、cooperative release | unload 阻止新执行但不原地撤销已开始 side effect | hot reload、灰度发布 |
+| protocol port 与 session generation | M22 | injected transport、handshake、revision、degraded union | connected/list/request-ready 分层，旧 generation fail closed | MCP/数据库连接池 |
+| indeterminate failure 与 retry policy | M22 | abort、session loss、stable idempotency key | local cancel 不等于 remote rollback；重试需显式资格 | RPC、支付/Tool side effect |
+| lock、lease、heartbeat 与 fencing | M23 | target/task-list lock、H5 ClaimLease | 临界区原子不等于分布式事务；TTL 还需 stale-writer fencing | DB CAS、worker pool |
+| linked/detached cancellation ownership | M23 | Subagent/RuntimeExecution AbortController | background 是呈现模式，detached 是资源 owner 决策 | structured concurrency |
+| at-least-once mailbox 与 explicit ack | M23 | message ID、recipient sequence、redelivery | delivery/read/ack/business effect 分层 | queue、outbox/inbox |
+| stable trigger 与 recovery state | M23 | pending trigger、commit、recurring advance | 恢复可重投同一 identity，但不承诺外部 exactly-once | scheduler、workflow engine |
 
-S0-S3 仍不是 TypeScript 的最终教程。后续机制首次引入尚未覆盖的语言能力时，继续按“最小语义 -> 当前源码作用 -> Java/Python 对照 -> 可运行验证”补齐。
+S0-S4 仍不是 TypeScript 的最终教程。后续机制首次引入尚未覆盖的语言能力时，继续按“最小语义 -> 当前源码作用 -> Java/Python 对照 -> 可运行验证”补齐。

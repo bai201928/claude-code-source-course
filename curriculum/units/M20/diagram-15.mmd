@@ -1,0 +1,17 @@
+flowchart TD
+  X["untrusted tool_use"] --> V0["schema + semantic validation"]
+  V0 --> H["ordered / parallel Hook proposals"]
+  H --> RW{"input rewritten?"}
+  RW -->|"yes"| VN["new revision + revalidation"]
+  RW -->|"no"| P["policy decision"]
+  VN --> P
+  P -->|"ask"| A["interactive/headless resolver"]
+  P -->|"deny"| F["single paired-result finalizer"]
+  P -->|"allow"| C["final cancellation gate"]
+  A -->|"deny/failure"| F
+  A -->|"allow"| C
+  C -->|"cancelled"| F
+  C -->|"live"| E["handler side effect"]
+  E --> PH["PostHook: continuation only"]
+  PH --> F
+  F --> N["next request or stop"]

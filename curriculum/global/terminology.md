@@ -1,6 +1,6 @@
 # 全局术语表
 
-状态：`S3 已发布`
+状态：`S4 已发布`
 
 本表只保存后续单元需要复用的稳定术语。具体教学解释仍以来源单元为准。
 
@@ -9,8 +9,8 @@
 | 编译期类型 | TypeScript 对内部表达式和控制流的静态约束 | 运行时输入验证、合法状态迁移 | M01 |
 | 运行时验证 | 对 JSON、Tool 输入、文件/网络数据执行的真实检查 | `as` 断言、type annotation | M01 |
 | 判别联合 | 用稳定字面量字段选择合法变体和分支 | 自动状态机、运行时 schema | M01 |
-| Runtime Task | `src/Task.ts` 的运行任务生命周期 | `src/utils/tasks.ts` 的协作任务清单 | M01 |
-| Work-item Task | `src/utils/tasks.ts` 的协作任务记录 | Runtime Task | M01 |
+| Runtime Task | `src/Task.ts` / AppState 的活执行、输出、时间与停止生命周期 | `src/utils/tasks.ts` 的协作责任记录 | M01/M23 |
+| Work-item Task | `src/utils/tasks.ts` 的持久化协作责任、owner 与依赖记录 | Runtime Task、Cron trigger | M01/M23 |
 | Promise | 一个异步终值或 rejection | 多次事件、自动取消、自动背压 | M02 |
 | AsyncIterable | 可以逐次异步消费的协议外观 | 无缓冲、单一实现、端到端背压 | M02 |
 | AsyncGenerator | 同时是 async iterator 与 producer 的语言对象 | 外部资源生命周期的完整 owner | M02 |
@@ -70,3 +70,13 @@
 | Auto Memory | 按 canonical git root持久化的 topic files与 `MEMORY.md`索引 | Session Memory、Instruction、Transcript | M19 |
 | relevance recall | 从 topic header选择、限量读取并作为当前请求attachment投影 | 所有 memory永久注入 system prompt | M19 |
 | memory candidate | H3 clean-room中尚未 explicit accept、不可 recall 的观察 | Claude Code 当前已存在的统一状态机、accepted长期事实 | M19/H3 |
+| DecisionContext | H4-1 中一次 tool call 经 rewrite/revalidation/policy 的 immutable input revision | durable conversation、Hook 共享可变对象 | M20/H4 |
+| 安全单调 decision | Hook 可以把决策收紧，但 allow 不能越过最终 Permission deny | last-writer-wins、Hook 直接执行授权 | M20/H4 |
+| extension source identity | marketplace、locator、plugin、version 组成的物化来源身份 | model-visible namespace、cache path、签名验证结果 | M21/H4 |
+| execution lease | extension component 已获准开始的一次执行资格，可在 unload 后合作式 drain | 新 snapshot 成员资格、Work-item claim lease | M21/H4 |
+| MCP generation | 一次 transport/session 连接世代 | 同一连接内 tool catalog revision、Provider request ID | M22/H4 |
+| indeterminate outcome | 本地无法确认远端副作用是否发生，不能自动当 success/failure 重试 | 一定失败、远端 rollback、exactly-once | M22/H4 |
+| claim lease | H5 WorkItemStore 中带 owner、token、generation、heartbeat 和 expiry 的限时提交权 | Claude Code 当前 owner string、Runtime AbortController | M23/H5 |
+| fencing token | 旧 worker 在 lease 被重领后不能提交的代际凭证 | 只设置 TTL、取消通知 | M23/H5 |
+| acknowledged mailbox | H5 中 message ID 去重、未 ack 重投和 recipient sequence 的 at-least-once mailbox | Claude Code file inbox `read`、业务 effect 已提交 | M23/H5 |
+| pending trigger | H6 foundation 在副作用前生成、恢复时保持 stable ID 的待提交调度记录 | PID lock、`inFlight`、外部 exactly-once | M23/H5-H6 |

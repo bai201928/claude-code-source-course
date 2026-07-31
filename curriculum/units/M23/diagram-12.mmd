@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant UI as foreground UI
+  participant R as Runtime Task
+  participant I1 as sync iterator
+  participant I2 as async continuation
+  UI->>R: register foreground task
+  loop each message
+    UI->>I1: next()
+    UI->>R: race backgroundSignal
+  end
+  R-->>UI: background signal
+  UI->>I1: return() / cleanup finally
+  UI->>I2: runAgent(isAsync, same task controller)
+  I2->>R: progress then terminal

@@ -1,0 +1,8 @@
+flowchart TD
+  B["candidate bundles"] --> VALID["shape + trust policy"]
+  VALID --> BUILD["构建完整 entries"]
+  BUILD --> COLL{"qualified-name conflict?"}
+  COLL -->|"yes"| REJECT["返回 conflict / 旧 revision 不变"]
+  COLL -->|"no"| SWAP["atomic replace entries + active source keys"]
+  SWAP --> SNAP["immutable ExtensionSnapshot"]
+  SNAP --> ADAPT["CapabilityCatalog definitions"]

@@ -1,0 +1,9 @@
+sequenceDiagram
+  participant A as async agent
+  participant T as Runtime Task
+  participant O as TaskOutput waiter
+  participant C as cleanup/classifier
+  A->>T: terminal status first
+  T-->>O: unblock with outcome
+  A->>C: classify handoff / cleanup worktree
+  C-->>A: metadata for notification

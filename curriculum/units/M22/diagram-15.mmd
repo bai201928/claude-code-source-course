@@ -1,0 +1,7 @@
+flowchart LR
+  OFFICIAL["official MCP SDK adapter"] --> PORT["McpTransport port"]
+  FAKE["deterministic fake transport"] --> PORT
+  PORT --> SESSION["McpSession generation + revision"]
+  SESSION --> SNAP["immutable capability snapshot"]
+  SNAP --> RUNTIME["Agent Runtime / Permission"]
+  SESSION --> TRACE["metadata-only trace"]

@@ -1,0 +1,7 @@
+flowchart LR
+  V["version / ref / SHA"] --> ID["物化定位"]
+  ID --> CACHE["cache 命中 / 并存 / 回滚"]
+  CACHE -. "不能推出" .-> AUTH["发布者真实性"]
+  CACHE -. "不能推出" .-> SIGN["组织信任签名"]
+  POLICY["source allowlist"] --> TRUST["允许来源"]
+  VERIFY["签名 + transparency + digest"] --> TRUST

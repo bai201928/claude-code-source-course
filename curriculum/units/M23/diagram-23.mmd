@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant S as scheduler owner
+  participant E as external effect
+  participant F as schedule file
+  S->>E: onFire(trigger)
+  E-->>S: effect may be committed
+  S--xS: crash before persistence
+  Note over F: one-shot still exists / lastFiredAt still old
+  S->>F: new owner reloads old record
+  S->>E: trigger fires again

@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant R1 as Request R1 / snapshot v1
+  participant REG as ExtensionRegistry
+  participant ADM as Admin reload
+  participant R2 as Request R2 / snapshot v2
+  R1->>REG: acquire demo:Read lease(v1)
+  ADM->>REG: publish revision 2 / unload v1
+  REG-->>R2: new snapshot excludes v1
+  R1->>R1: 已获 lease 继续并配对结果
+  R2-xREG: 不能从旧 snapshot 新 acquire v1
+  R1->>REG: release lease(v1)

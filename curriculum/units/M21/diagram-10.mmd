@@ -1,0 +1,16 @@
+sequenceDiagram
+  participant R as refreshActivePlugins
+  participant C as caches/loader
+  participant A as AppState
+  participant L as LSP manager
+  participant H as Hook registry
+  R->>C: clearAllCaches
+  R->>C: await loadAllPlugins
+  par cache-only consumers
+    R->>C: getPluginCommands
+    R->>C: getAgentDefinitions
+  end
+  R->>C: warm MCP/LSP descriptors
+  R->>A: setAppState + reconnect key
+  R->>L: reinitialize
+  R->>H: clear and register Hooks

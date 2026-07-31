@@ -1,0 +1,8 @@
+flowchart LR
+  DEF["Tool definition"] --> MODEL["模型可见 schema"]
+  DEF --> SCHED["并发 / 只读 / destructive 元数据"]
+  DEF --> GOV["validation + permission"]
+  DEF --> EXEC["call handler"]
+  DEF --> RESULT["output mapping / size policy"]
+  MODEL -. "可见不等于获准" .-> GOV
+  GOV -. "获准不等于已执行" .-> EXEC

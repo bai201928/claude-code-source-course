@@ -1,0 +1,9 @@
+flowchart TD
+  BODY["已读入的 Skill body"] --> ORIGIN{"来源是 MCP?"}
+  ORIGIN -->|"是：remote/untrusted"| NOSHELL["不执行 inline shell"]
+  ORIGIN -->|"否"| EXPAND["参数 / session / dir 替换"]
+  EXPAND --> SAFE{"安全属性与权限判断"}
+  SAFE -->|"需确认"| ASK["进入 Permission"]
+  SAFE -->|"允许"| SHELL["可执行受支持的 prompt shell"]
+  NOSHELL --> PROMPT["投影为 Skill 内容"]
+  SHELL --> PROMPT

@@ -1,0 +1,16 @@
+flowchart TD
+  M["managed skills"] --> LOCAL["本地 Skill 数组"]
+  U["user skills"] --> LOCAL
+  P["project skills"] --> LOCAL
+  A["additional dirs"] --> LOCAL
+  L["legacy commands"] --> LOCAL
+  LOCAL --> REAL["canonical realpath 去同文件重复"]
+  B["bundled"] --> ALL["loadAllCommands flat array"]
+  BP["built-in plugin"] --> ALL
+  REAL --> ALL
+  W["workflow"] --> ALL
+  PC["plugin commands"] --> ALL
+  PS["plugin skills"] --> ALL
+  BI["built-in commands"] --> ALL
+  ALL --> FIND["findCommand / Array.find"]
+  FIND --> WIN["第一个同名项获胜"]

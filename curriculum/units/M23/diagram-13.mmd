@@ -1,0 +1,9 @@
+sequenceDiagram
+  participant L as leader
+  participant T as LocalAgentTask
+  participant Q as current model/tool round
+  participant N as next tool round
+  L->>T: queuePendingMessage(text)
+  Q-->>T: current round finishes
+  T->>N: drainPendingMessages()
+  N->>N: inject attachment/user guidance

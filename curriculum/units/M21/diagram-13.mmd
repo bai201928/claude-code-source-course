@@ -1,0 +1,7 @@
+flowchart LR
+  PRED["先写预测"] --> MUT["只破坏一个契约"]
+  MUT --> OBS["观察 revision / conflict / lease / trace"]
+  OBS --> REFUTE{"出现反证?"}
+  REFUTE -->|"是"| MODEL["修正心智模型"]
+  REFUTE -->|"否"| REPAIR["恢复实现并回归"]
+  REPAIR --> EXPLAIN["用自己的话解释边界"]

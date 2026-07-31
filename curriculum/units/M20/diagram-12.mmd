@@ -1,0 +1,13 @@
+flowchart LR
+  ID["tool_use_id = X"] --> PATHS{"任一终止路径"}
+  PATHS --> V["validation error"]
+  PATHS --> D["denied"]
+  PATHS --> C["cancelled"]
+  PATHS --> S["success"]
+  PATHS --> E["handler error"]
+  V --> F["single finalizer"]
+  D --> F
+  C --> F
+  S --> F
+  E --> F
+  F --> R["tool_result.tool_use_id = X"]

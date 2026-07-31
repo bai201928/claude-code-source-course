@@ -1,0 +1,9 @@
+flowchart TD
+  WIS["WorkItemStore\nrevision + lease + fencing"] --> RER["RuntimeExecutionRegistry\nlinked / detached cancel"]
+  TEAM["TeamDirectory\nteam + member identity"] --> BOX["AcknowledgedMailbox\nsequence + dedupe + ack"]
+  TEAM --> SHUT["ShutdownCoordinator\nrequest state"]
+  SCHED["DurableScheduler foundation\nstable pending trigger"] --> WIS
+  WIS --> TRACE["metadata-only trace"]
+  RER --> TRACE
+  BOX --> TRACE
+  SCHED --> TRACE

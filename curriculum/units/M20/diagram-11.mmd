@@ -1,0 +1,9 @@
+flowchart TD
+  CALL["tool.call"] -->|"success"| SIDE["副作用 / read 已完成"]
+  CALL -->|"throw"| ERR["失败事实已产生"]
+  SIDE --> POST["PostToolUse"]
+  ERR --> PF["PostToolUseFailure"]
+  POST --> RES["paired tool_result"]
+  PF --> RES
+  POST -->|"block"| STOP["不再发下一次模型请求"]
+  POST -. "不能回滚" .-> SIDE

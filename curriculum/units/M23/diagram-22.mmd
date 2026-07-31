@@ -1,0 +1,7 @@
+flowchart TD
+  LOAD["initial load"] --> DUE{"past due?"}
+  DUE -->|"one-shot"| ASK["surface missed once"]
+  ASK --> REMOVE["async remove"]
+  DUE -->|"recurring"| TICK["normal check fires once"]
+  TICK --> NOW["reschedule from now"]
+  RELOAD["chokidar reload"] --> CHECK["normal check, not missed prompt"]

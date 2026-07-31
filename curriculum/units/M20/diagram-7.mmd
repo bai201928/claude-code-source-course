@@ -1,0 +1,11 @@
+flowchart TD
+  HP["Hook proposal"] --> HD{"Hook deny?"}
+  HD -->|"yes"| D["deny"]
+  HD -->|"no"| RULE["rule-based permissions"]
+  RULE -->|"deny"| D
+  RULE -->|"ask"| ASK["canUseTool / resolver"]
+  RULE -->|"allow"| REQ{"requires interaction\nor requireCanUseTool?"}
+  REQ -->|"yes"| ASK
+  REQ -->|"no"| A["allow"]
+  ASK -->|"user/hook deny"| D
+  ASK -->|"approve + final input"| A

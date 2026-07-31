@@ -1,0 +1,14 @@
+stateDiagram-v2
+  [*] --> Revision0: raw input
+  Revision0 --> Validated0: schema + semantic
+  Validated0 --> RevisionN: ordered Hook rewrite
+  RevisionN --> ValidatedN: schema + semantic again
+  ValidatedN --> Policy: Hook proposals + policy
+  Policy --> Resolver: ask
+  Policy --> FinalGate: allow
+  Resolver --> FinalGate: explicit allow
+  Resolver --> Denied: missing / throw / deny
+  FinalGate --> Cancelled: signal aborted
+  FinalGate --> Handler: signal live
+  Handler --> Post: success / failure
+  Post --> Result: continue or stop

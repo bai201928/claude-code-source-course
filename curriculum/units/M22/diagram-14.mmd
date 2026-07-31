@@ -1,0 +1,8 @@
+flowchart TD
+  SERVER["server elicitation request"] --> READY{"real handler ready?"}
+  READY -->|"no / initialization window"| CANCEL["action=cancel"]
+  READY -->|"yes"| HOOK["Elicitation Hook"]
+  HOOK -->|"resolved"| RESP["accept / decline / cancel"]
+  HOOK -->|"unresolved"| OWNER["REPL queue / SDK consumer"]
+  OWNER --> RESP
+  RESP --> SERVER

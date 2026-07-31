@@ -4,6 +4,10 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { ModelToolDefinition } from './model.ts'
 import {
+  ExtensionDecisionPipeline,
+  type DecisionEvidence,
+} from './extensionDecision.ts'
+import {
   PermissionDeniedError,
   type PermissionDecision,
   type PermissionGate,
@@ -32,6 +36,7 @@ export type AgentTool = Readonly<{
   risk: ToolRisk
   isConcurrencySafe?(input: Readonly<Record<string, unknown>>): boolean
   permissionRequest(input: Readonly<Record<string, unknown>>): PermissionRequest
+  validateInput?(input: Readonly<Record<string, unknown>>): void | Promise<void>
   execute(input: Readonly<Record<string, unknown>>, context: ToolContext): Promise<unknown>
   contextUpdate?(
     input: Readonly<Record<string, unknown>>,
@@ -42,6 +47,9 @@ export type AgentTool = Readonly<{
 export type ToolDispatchResult = Readonly<{
   decision: PermissionDecision
   output: unknown
+  continueConversation: boolean
+  decisionEvidence: readonly DecisionEvidence[]
+  inputRevision: number
   contextUpdate?: ToolContextUpdate
 }>
 
@@ -50,6 +58,11 @@ export class ToolExecutionError extends Error {}
 
 export class AgentToolRegistry {
   readonly #tools = new Map<string, AgentTool>()
+  readonly #decisionPipeline: ExtensionDecisionPipeline
+
+  constructor(decisionPipeline = new ExtensionDecisionPipeline()) {
+    this.#decisionPipeline = decisionPipeline
+  }
 
   register(tool: AgentTool): void {
     requireIdentifier(tool.name, 'tool name')
@@ -98,24 +111,44 @@ export class AgentToolRegistry {
     context: ToolContext,
     gate: PermissionGate,
     visibleNames: ReadonlySet<string>,
+    callId = `direct:${name}`,
   ): Promise<ToolDispatchResult> {
     throwIfAborted(context.signal)
     if (!visibleNames.has(name)) throw new ToolExecutionError(`tool is not visible: ${name}`)
     const tool = this.#tools.get(name)
     if (!tool) throw new ToolExecutionError(`visible tool has no executable handler: ${name}`)
-    validateToolInput(input, tool.inputSchema)
-    const decision = Object.freeze(await abortableDecision(
-      gate.decide(tool.permissionRequest(input), context.signal),
-      context.signal,
-    ))
-    if (!decision.allowed) throw new PermissionDeniedError(decision)
+    const prepared = await this.#decisionPipeline.prepare({
+      callId,
+      toolName: name,
+      input,
+      validateSchema: candidate => validateToolInput(candidate, tool.inputSchema),
+      validateSemantics: tool.validateInput,
+      permissionRequest: candidate => tool.permissionRequest(candidate),
+      gate,
+      signal: context.signal,
+    })
+    const decision = prepared.decision
+    if (!decision.allowed) throw new PermissionDeniedError(decision, {
+      inputRevision: prepared.context.revision,
+      evidenceCount: prepared.evidence.length,
+    })
     throwIfAborted(context.signal)
-    const output = await tool.execute(input, context)
-    throwIfAborted(context.signal)
-    const contextUpdate = tool.contextUpdate?.(input, output)
+    let output: unknown
+    try {
+      output = await tool.execute(prepared.context.input, context)
+      throwIfAborted(context.signal)
+    } catch (error) {
+      await this.#decisionPipeline.after(prepared, false, context.signal)
+      throw error
+    }
+    const post = await this.#decisionPipeline.after(prepared, true, context.signal)
+    const contextUpdate = tool.contextUpdate?.(prepared.context.input, output)
     return Object.freeze({
       decision,
       output,
+      continueConversation: post.continueConversation,
+      decisionEvidence: post.evidence,
+      inputRevision: prepared.context.revision,
       ...(contextUpdate ? { contextUpdate: structuredClone(contextUpdate) } : {}),
     })
   }

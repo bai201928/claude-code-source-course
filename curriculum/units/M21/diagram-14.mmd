@@ -1,0 +1,10 @@
+flowchart TD
+  CP["Extension control plane"] --> ART["verified artifact"]
+  ART --> REG["revisioned registry"]
+  REG --> APP1["instance A / generation 42"]
+  REG --> APP2["instance B / generation 42"]
+  APP1 --> REQ1["request snapshot"]
+  APP2 --> REQ2["request snapshot"]
+  REQ1 --> LEASE1["execution lease"]
+  REQ2 --> LEASE2["execution lease"]
+  GRAPH["LangGraph / workflow"] -. "引用 capability handle" .-> REQ1

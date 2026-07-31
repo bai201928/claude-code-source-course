@@ -27,6 +27,9 @@ export type ToolExecutionOutcome = Readonly<{
   output: string
   isError: boolean
   reason: string
+  continueConversation: boolean
+  inputRevision: number
+  decisionEvidenceCount: number
   contextUpdate?: ToolContextUpdate
 }>
 
@@ -83,6 +86,7 @@ export class ToolScheduler {
   ): Promise<Readonly<{
     outcomes: readonly ToolExecutionOutcome[]
     context: Readonly<Record<string, unknown>>
+    continueConversation: boolean
   }>> {
     const outcomes = new Map<string, ToolExecutionOutcome>()
     let context: Readonly<Record<string, unknown>> = Object.freeze({
@@ -103,6 +107,7 @@ export class ToolScheduler {
     return Object.freeze({
       outcomes: Object.freeze(plan.batches.flatMap(batch => batch.calls).map(call => outcomes.get(call.id)!)),
       context,
+      continueConversation: [...outcomes.values()].every(outcome => outcome.continueConversation),
     })
   }
 
@@ -142,6 +147,7 @@ export class ToolScheduler {
         },
         options.gate,
         options.visibleNames,
+        call.id,
       )
       if (options.signal.aborted) return cancelledOutcome(call, safeError(options.signal.reason))
       return Object.freeze({
@@ -150,6 +156,9 @@ export class ToolScheduler {
         output: serializeOutput(result.output),
         isError: false,
         reason: result.decision.reason,
+        continueConversation: result.continueConversation,
+        inputRevision: result.inputRevision,
+        decisionEvidenceCount: result.decisionEvidence.length,
         ...(result.contextUpdate ? { contextUpdate: result.contextUpdate } : {}),
       })
     } catch (error) {
@@ -161,6 +170,9 @@ export class ToolScheduler {
         output: safeError(error),
         isError: true,
         reason: denied ? error.decision.reason : safeErrorCategory(error),
+        continueConversation: true,
+        inputRevision: denied ? error.inputRevision : 0,
+        decisionEvidenceCount: denied ? error.evidenceCount : 0,
       })
     }
   }
@@ -181,6 +193,9 @@ function cancelledOutcome(call: ModelToolCall, output: string): ToolExecutionOut
     output: output || 'operation cancelled',
     isError: true,
     reason: 'cancellation',
+    continueConversation: true,
+    inputRevision: 0,
+    decisionEvidenceCount: 0,
   })
 }
 

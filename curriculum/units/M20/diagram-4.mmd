@@ -1,0 +1,8 @@
+flowchart LR
+  I0["revision 0\nvalidated"] --> H["Hook / user rewrite"]
+  H --> I1["fresh input"]
+  I1 -. "当前快照：无统一双重再验证" .-> P["permission paths"]
+  P --> C["tool.call"]
+  I1 --> FIX["H4-1: schema + semantic"]
+  FIX -->|"pass"| P2["policy"]
+  FIX -->|"fail"| R["paired error，handler=0"]

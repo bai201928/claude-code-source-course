@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant P as Permission queue
+  participant H as PermissionRequest Hook
+  participant C as classifier
+  participant U as user dialog
+  participant O as resolveOnce
+  P->>H: start
+  P->>C: start / maybe await
+  P->>U: render when needed
+  C-->>O: candidate allow
+  U-->>O: candidate deny
+  H-->>O: candidate rewrite
+  O-->>P: exactly one claimed decision
+  Note over O: 后到候选被忽略，不重复执行

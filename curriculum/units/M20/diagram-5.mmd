@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant E as executeHooks
+  participant H1 as Hook A
+  participant H2 as Hook B
+  participant H3 as Hook C
+  participant A as aggregator
+  E->>H1: start
+  E->>H2: start
+  E->>H3: start
+  H2-->>A: allow + rewrite B
+  H1-->>A: ask + rewrite A
+  H3-->>A: deny
+  A-->>A: behavior = deny
+  Note over A: behavior 单调安全<br/>rewrite/reason/source 按完成流消费

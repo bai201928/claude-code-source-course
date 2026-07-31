@@ -1,0 +1,8 @@
+flowchart TD
+  ERR["terminal transport errors / session expired"] --> CLOSE["client.close()"]
+  CLOSE --> TC["transport.close()"]
+  TC --> SDK["SDK internal _onclose"]
+  SDK --> PENDING["reject pending callTool requests"]
+  SDK --> APP["application onclose"]
+  APP --> CACHE["clear connection + tools/resources/prompts cache"]
+  CACHE --> NEXT["next ensureConnected may reconnect"]

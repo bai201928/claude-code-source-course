@@ -1,6 +1,6 @@
-# S0-S3 源码符号地图
+# S0-S4 源码符号地图
 
-状态：`S3 已发布`
+状态：`S4 已发布`
 
 行号只作当前快照辅助，稳定定位采用“路径 -> 符号 -> 决定性分支”。
 
@@ -71,5 +71,16 @@
 | M19 | `src/services/SessionMemory/` / `services/compact/sessionMemoryCompact.ts` | session summary extraction、safe boundary、SM-first compact 与 fallback |
 | M19 | `src/services/extractMemories/` / `src/memdir/` | Auto Memory topic/index、best-effort extraction 与 relevance attachment |
 | M19 | `src/services/autoDream/` | time/session/lock gates 与跨 session consolidation |
+| M20 | `src/services/tools/toolExecution.ts` -> validation / Hook / Permission / call / PostHook | 单个 tool call 的执行治理主链与 paired failure |
+| M20 | `src/hooks/` / Permission decision paths | 并行 Hook、behavior 合流、rewrite、interactive/headless 与取消窗口 |
+| M21 | Skill/command loaders 与 Plugin discovery/materialization paths | source policy、realpath 去重、正文延迟投影和多组件交付 |
+| M21 | Plugin manifest/marketplace/cache/refresh paths | namespace、完整来源身份、信任边界与非全局事务刷新 |
+| M22 | MCP client manager/session/transport paths | initialize、client capabilities、list 分类、qualified name 与 refresh lifecycle |
+| M22 | MCP Tool adapter/call/close paths | remote schema/local passthrough、annotation hint、abort/timeout/retry 与 pending rejection |
+| M23 | `src/Task.ts` / `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Runtime Task 状态、output、AbortController、background handoff 与 terminal cleanup |
+| M23 | `src/utils/tasks.ts` -> task-list identity / `claimTask()` / `unassignTeammateTasks()` | Work-item 持久化、target/task-list lock、owner 非 lease 与成员退出回收 |
+| M23 | `src/tools/AgentTool/` -> run/resume/fork | sync/async cancellation、sidechain resume、worktree fallback、fork context 与递归 guard |
+| M23 | TeamCreate / `teamHelpers.ts` / mailbox / SendMessage | Team identity、shared task list、direct/broadcast routing 与 shutdown handshake |
+| M23 | `src/utils/cronTasks.ts` / `cronScheduler.ts` / `cronTasksLock.ts` | PID owner、missed/jitter、fire-before-persist 与非 exactly-once 边界 |
 
 已知快照边界：`src/types/message.ts`、`src/types/utils.ts`、`src/types/tools.ts` 与 `src/query/transitions.ts` 缺失，不能声称原项目完整 typecheck，也不能从 import 名称补造完整类型声明。

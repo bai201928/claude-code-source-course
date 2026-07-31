@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant L as team lead
+  participant BI as teammate inbox
+  participant W as teammate
+  participant LI as leader inbox
+  L->>BI: shutdown_request(requestId)
+  W->>BI: read request
+  alt approve
+    W->>LI: shutdown_approved(requestId)
+    W->>W: abort own controller / graceful exit
+  else reject
+    W->>LI: shutdown_rejected(requestId, reason)
+    W->>W: continue working
+  end

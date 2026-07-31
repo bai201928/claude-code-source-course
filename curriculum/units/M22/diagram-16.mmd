@@ -1,0 +1,5 @@
+flowchart LR
+  HYP["写下要验证的保证"] --> FAULT["list fail / notify race / expiry / abort"]
+  FAULT --> OBS["观察 state + generation + revision + call count"]
+  OBS --> BOUND["区分 local outcome 与 remote side effect"]
+  BOUND --> REPAIR["恢复 fail-closed / idempotency / immutable snapshot"]

@@ -399,6 +399,13 @@ export class AgentRuntime {
 
         let expectedRevision = this.#conversation.revision
         for (const outcome of execution.outcomes) {
+          await this.#trace.record(runId, 'tool.decision', {
+            toolName: outcome.call.name,
+            toolUseId: outcome.call.id,
+            inputRevision: outcome.inputRevision,
+            evidenceCount: outcome.decisionEvidenceCount,
+            continueConversation: outcome.continueConversation,
+          })
           this.#appendToolResult(
             outcome.call.id,
             outcome.output,
@@ -413,7 +420,7 @@ export class AgentRuntime {
             outcome.call.name,
             outcome.call.id,
             outcome.status,
-            outcome.reason,
+            outcome.status === 'success' ? 'policy-allowed' : outcome.status,
           )
         }
         this.#sessionState.publish({
@@ -421,6 +428,9 @@ export class AgentRuntime {
           toolExecutionContext: execution.context,
         })
         if (signal.aborted) return await this.#cancelled(runId, turns, usage, 'tool')
+        if (!execution.continueConversation) {
+          return await this.#completed(runId, turns, usage, response.text)
+        }
       }
 
       await this.#trace.record(runId, 'run.max-turns', { maxTurns: this.#maxTurns })

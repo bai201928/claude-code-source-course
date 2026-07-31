@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant CC as Claude Code client
+  participant SDK as MCP SDK
+  participant S as MCP server
+  CC->>SDK: new Client(capabilities: roots, elicitation)
+  CC->>SDK: set ListRoots handler
+  CC->>SDK: set default elicitation=cancel
+  CC->>SDK: connect(transport)
+  SDK->>S: initialize(client info/capabilities)
+  S-->>SDK: server info/capabilities/instructions
+  SDK-->>CC: connect resolved
+  CC->>SDK: getServerCapabilities/version/instructions

@@ -1,0 +1,9 @@
+flowchart TD
+  CALL["AgentTool call"] --> MODE{"shouldRunAsync?"}
+  MODE -->|"no"| SYNC["sync Subagent"]
+  SYNC --> PCTRL["share parent AbortController"]
+  PCTRL --> ESC["parent ESC -> child abort"]
+  MODE -->|"yes"| ASYNC["background Subagent"]
+  ASYNC --> CCTRL["independent AbortController"]
+  CCTRL --> SURVIVE["parent ESC -> child continues"]
+  SURVIVE --> STOP["TaskStop / explicit kill"]

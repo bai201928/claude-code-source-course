@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant FS as 文件系统
+  participant LD as loadSkillsDir
+  participant CMD as Command 闭包
+  participant IDX as 模型可见索引
+  participant ST as SkillTool
+  FS->>LD: 发现 SKILL.md
+  LD->>FS: readFile 全文
+  LD->>CMD: 保存 metadata + body
+  CMD-->>IDX: 主要投影 name / description
+  ST->>CMD: 调用 getPromptForCommand(args)
+  CMD-->>ST: 展开后的完整正文

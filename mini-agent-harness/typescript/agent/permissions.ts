@@ -45,10 +45,17 @@ export class PolicyPermissionGate implements PermissionGate {
 
 export class PermissionDeniedError extends Error {
   readonly decision: PermissionDecision
+  readonly inputRevision: number
+  readonly evidenceCount: number
 
-  constructor(decision: PermissionDecision) {
+  constructor(
+    decision: PermissionDecision,
+    metadata: Readonly<{ inputRevision?: number; evidenceCount?: number }> = {},
+  ) {
     super(decision.reason)
     this.name = 'PermissionDeniedError'
     this.decision = decision
+    this.inputRevision = metadata.inputRevision ?? 0
+    this.evidenceCount = metadata.evidenceCount ?? 0
   }
 }

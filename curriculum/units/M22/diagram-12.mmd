@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant C as client
+  participant S as server
+  C->>S: tools/call create_ticket
+  S->>S: 已创建 ticket #42
+  S--xC: response 丢失 / session expired
+  C->>C: clear cache + reconnect
+  C->>S: retry tools/call create_ticket
+  S->>S: 又创建 ticket #43
+  S-->>C: success

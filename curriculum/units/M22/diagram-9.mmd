@@ -1,0 +1,8 @@
+flowchart LR
+  MCP["connected MCP server"] --> TOOL["Tool: model-visible executable"]
+  MCP --> RES["Resource: list/read content"]
+  MCP --> PROMPT["Prompt: dynamic Command"]
+  TOOL --> PERM["Tool Permission"]
+  RES --> CONTENT["untrusted content boundary"]
+  PROMPT --> CONTENT
+  CONTENT --> PROJECT["message/request projection"]

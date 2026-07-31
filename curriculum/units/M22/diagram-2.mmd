@@ -1,0 +1,9 @@
+flowchart TD
+  T{"transport open?"} -->|"no"| FAILED["failed / pending / needs-auth"]
+  T -->|"yes"| I{"initialize complete?"}
+  I -->|"no"| HALF["half-initialized：关闭并失败"]
+  I -->|"yes"| C["connected + negotiated capabilities"]
+  C --> L{"list succeeded?"}
+  L -->|"部分失败"| EMPTY["该类能力为空，connection 仍可 connected"]
+  L -->|"成功"| CAT["active capability catalog"]
+  CAT --> REQ["下一次 request snapshot"]

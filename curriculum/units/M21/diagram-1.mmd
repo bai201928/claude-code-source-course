@@ -1,0 +1,11 @@
+flowchart LR
+  SRC["磁盘目录 / marketplace entry"] --> POLICY["source policy"]
+  POLICY --> MAT["下载或本地物化"]
+  MAT --> PARSE["manifest + component parse"]
+  PARSE --> NAME["namespace + command name"]
+  NAME --> ACTIVE["active components"]
+  ACTIVE --> SNAP["本轮能力快照"]
+  SNAP --> INVOKE["Skill / command / agent / Hook / MCP / LSP"]
+  SRC -. "设置意图" .-> ACTIVE
+  MAT -. "cache 不是 trust" .-> PARSE
+  ACTIVE -. "刷新不追溯旧快照" .-> SNAP

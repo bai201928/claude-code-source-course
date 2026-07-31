@@ -1,8 +1,8 @@
 # Mini Agent Harness
 
-这是随 Claude Code 源码教材累计演进的 clean-room Agent Harness。它不复制 Claude Code 私有实现；当前目标是用一条边界清楚、可运行、可测试的单 Agent 纵切，证明学习者真正理解了消息、状态、请求投影、模型调用、工具反馈、权限、取消和收尾怎样协作。
+这是随 Claude Code 源码教材累计演进的 clean-room Agent Harness。它不复制 Claude Code 私有实现；当前目标是用一条边界清楚、可运行、可测试的 Agent 纵切和协调控制面，证明学习者真正理解了消息、状态、请求投影、模型调用、工具治理、扩展能力、长生命周期工作、取消和恢复怎样协作。
 
-当前版本：`H3 / 0.4.0`（S3 正式里程碑）
+当前版本：`H5 / 0.5.0`（S4 正式里程碑，包含 H6 scheduler foundation）
 
 ## 现在已经能做什么
 
@@ -20,6 +20,7 @@ flowchart LR
   MODEL -->|"tool calls"| SCHED["ToolScheduler"]
   SCHED --> REG["ToolRegistry"]
   REG --> PERM["PermissionGate"]
+  HOOK["ExtensionDecisionPipeline"] --> REG
   PERM --> TOOL["read / list / search / command"]
   TOOL --> RESULT["paired tool result"]
   RESULT --> CS
@@ -29,10 +30,16 @@ flowchart LR
   MS["MemoryStore"] --> MP["MemoryProjector\naccepted / bounded recall"]
   IP -. "request-only view" .-> RP
   MP -. "request-only view" .-> RP
+  ER["ExtensionRegistry"] -. "capability snapshot" .-> CAP
+  MCP["McpSession"] -. "qualified remote tools" .-> CAP
   AR --> TRACE["metadata-only Trace"]
   RP --> REPORT["metadata-only ProjectionReport"]
   REPORT --> TRACE
   AR --> LIFE["budgeted shutdown"]
+  WI["WorkItemStore"] --> EXE["RuntimeExecutionRegistry"]
+  TEAM["TeamDirectory"] --> BOX["AcknowledgedMailbox"]
+  TEAM --> SHUT["ShutdownCoordinator"]
+  CRON["DurableScheduler"] --> WI
 ```
 
 核心能力：
@@ -55,8 +62,14 @@ flowchart LR
 - 不记录 prompt、tool payload、HTTP body 或 credential 的结构化 Trace；
 - TypeScript 主实现、Python 核心行为镜像，以及 H0/H1/H2/H3 累计回归；
 - M14 已加入 provider-neutral 的 `BoundedAgentRunStream`：固定容量、单消费者、terminal metadata、consumer close 到 owner abort/cleanup 的契约；现有 `complete()` 适配器保持兼容。
+- H4-1 的 `ExtensionDecisionPipeline` 已接入 ToolRegistry/Scheduler/Runtime：ordered Hook、immutable input revision、rewrite 后重验证/重授权、final cancel gate、post-effect continuation 与 metadata-only evidence；
+- H4-2 的 `ExtensionRegistry` 以完整 source identity 发布 revisioned immutable snapshot，冲突失败不部分提交，unload 后旧 snapshot 不能新建 execution lease；
+- H4-3 的 `McpSession` 用 transport-neutral port 表达 handshake、generation/revision、server-qualified tool snapshot、list-changed refresh、degraded/disconnect 和显式 recovery policy；
+- H5 的 `WorkItemStore` 与 `RuntimeExecutionRegistry` 分开责任和活执行，加入 lease/heartbeat/reclaim/fencing、linked/detached cancellation；
+- H5 的 `TeamDirectory`、`AcknowledgedMailbox` 和 `ShutdownCoordinator` 加入稳定身份、message ID、per-recipient sequence、redelivery-until-ack 与 correlated shutdown；
+- H6 foundation 的 `DurableScheduler` 先持久化语义上的 stable pending trigger，再 commit one-shot removal 或 recurring advance；它不宣称外部副作用 exactly-once。
 
-详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，行为不变量见 [contracts/h3-contract.md](contracts/h3-contract.md)。
+详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，累计行为不变量见 [H3](contracts/h3-contract.md)、[H4](contracts/h4-contract.md) 与 [H5](contracts/h5-contract.md) 契约。
 
 ## 快速运行
 
@@ -137,15 +150,19 @@ npm run agent -- --grant-executable rg --grant-executable node
 | Compact | revision gate、取消、prepared recovery、tool-pair-safe tail、metadata-only report |
 | Instructions | source layering、scope/trust、dedupe、stale snapshot、request-only dynamic delta |
 | Memory | candidate acceptance、scope、provenance、stale revision、retention、bounded recall、content-free Trace |
+| Extension decision | Hook rewrite、重验证/重授权、policy monotonicity、ask fail-closed、final cancel、PostHook continuation |
+| Extension registry | source identity、trust、conflict atomicity、snapshot、unload、execution lease |
+| MCP session | handshake/list、generation/revision、refresh/degrade、disconnect、abort、indeterminate retry |
+| Work coordination | blocker/claim、lease/heartbeat/reclaim/fencing、linked/detached execution、Team/Mailbox/shutdown/scheduler |
 | Provider protocol | Chat Completions 请求投影、tool call JSON、usage、脱敏 HTTP 错误、URL 约束 |
 | Built-in tools | workspace 越界、`rg` 搜索、默认拒绝命令、secret 不进入子进程 |
 | Tool scheduler | safe batch、exclusive barrier、并发上限、顺序提交、progress 与 exactly-once outcome |
 | Python mirror | 与 TypeScript 一致的 loop、pairing、permission、cancel、stream 和 scheduler 行为 |
-| 累计回归 | H3 -> H2 -> H1 -> H0 与所有历史行为契约 |
+| 累计回归 | H5 -> H4 -> H3 -> H2 -> H1 -> H0 与所有历史行为契约 |
 
 真实 API 冒烟与确定性测试分开。模型可达不证明 Tool Loop 正确，fake provider 测试通过也不伪装成真实网络验证。
 
-当前验证基线（2026-07-31）：`npm test` 共 `69/69`（Config `1/1`、Runtime `27/27`、Compact `5/5`、Instructions `7/7`、Memory `8/8`、Provider `7/7`、Tool `5/5`、Scheduler `5/5`、Stream `4/4`），本地锁定编译器 strict typecheck 通过；统一 Python Agent/Compact/Instructions/Memory/Scheduler/Stream 回归 `43/43`，ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成回归 `4/4` 全部通过。
+当前验证基线（2026-07-31）：`npm test` 共 `105/105`，其中 ExtensionDecision `7/7`、ExtensionRegistry `8/8`、McpSession `9/9`、WorkCoordinator `12/12`；本地锁定编译器 strict typecheck 通过。统一 Python integrated 回归 `79/79`，ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成回归 `4/4` 全部通过。
 
 ## 为什么适合简历和面试讲解
 
@@ -159,11 +176,15 @@ npm run agent -- --grant-executable rg --grant-executable node
 6. single-flight、max turns、AbortSignal 与 budgeted shutdown 分别守住什么失控边界。
 7. 为什么 Context projection、Compact transaction、Instruction catalog 与 Memory lifecycle 必须拥有不同 revision；
 8. 为什么 candidate memory 不能直接进入模型请求，retention 与 bounded recall 又由谁执行。
+9. 为什么 Hook rewrite 后必须重验证和重授权，PostHook 又为何不能声称回滚副作用；
+10. 为什么 Plugin namespace、source identity、registry revision 与 MCP generation 是不同身份和版本边界；
+11. 为什么 WorkItem owner 不是 Runtime execution，lease 过期后还需要 fencing token；
+12. 为什么 message `read` 不是业务 ack，stable trigger 也不等于 exactly-once。
 
 一条准确的简历描述可以是：
 
-> 设计并实现 TypeScript/Python 单 Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、请求/能力快照、并发 Tool Loop、Compact transaction、scoped Instruction Pipeline 与 candidate-gated Memory recall，守住顺序提交、取消与配对恢复、工作区工具和 content-free Trace，并用确定性协议测试与真实 Provider 冒烟分层验证。
+> 设计并实现 TypeScript/Python Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、并发 Tool Loop、Context/Compact/Memory、Hook/Permission 决策、扩展与 MCP capability lifecycle，并实现带 lease/fencing、ack 和稳定 trigger 的多 Agent 协调控制面；用 105 个 TypeScript 与 79 个 Python 协议测试守住取消、顺序提交和恢复边界。
 
 ## 当前边界
 
-本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 增量消费、streaming tool execution、透明 model fallback、crash-durable Compact/Transcript、外置结果恢复、完整 CLAUDE.md discovery、Hook/Skill/MCP/Plugin、Subagent/Team、数据库持久化 Memory、embedding recall、PII/DLP enforcement、Sandbox、分布式执行和完整 OTel/cost ledger。Instruction 与 Memory projector 当前是可组合、已测试的独立 owner，尚未自动接入每次 `AgentRuntime.submit()`；调用方必须显式生成 request-only context。统一 Harness executor 也是 clean-room 设计迁移，不等同于 Claude Code 快照的两条执行路径。
+本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 增量消费、streaming tool execution、透明 model fallback、crash-durable Compact/Transcript、外置结果恢复、完整 CLAUDE.md discovery、真实 Skill/Plugin filesystem discovery 或 marketplace、官方 MCP transport/OAuth/Resource/Prompt adapter、process-backed Subagent/Team、durable queue/mailbox、数据库持久化 Memory、embedding recall、PII/DLP enforcement、Sandbox、分布式执行和完整 OTel/cost ledger。Instruction、Memory、ExtensionRegistry、McpSession 与 WorkCoordinator 是可组合、已测试的独立 owner；除 H4-1 Tool decision pipeline 外，它们尚未自动接入每次 `AgentRuntime.submit()`。H5/H6 foundation 是 persistence-neutral reference implementation，不冒充生产 durability 或 Claude Code 私有实现。

@@ -1,0 +1,20 @@
+stateDiagram-v2
+  state "Runtime Task" as RT {
+    [*] --> pending
+    pending --> running
+    running --> completed
+    running --> failed
+    running --> killed
+  }
+  state "Work-item Task" as WT {
+    [*] --> wi_pending
+    wi_pending --> wi_progress
+    wi_progress --> wi_completed
+    wi_progress --> wi_pending: unassign / reclaim
+  }
+  state "Cron record" as CT {
+    [*] --> scheduled
+    scheduled --> trigger_pending: due
+    trigger_pending --> removed: one-shot commit
+    trigger_pending --> scheduled: recurring reschedule
+  }

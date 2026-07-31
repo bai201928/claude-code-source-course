@@ -1,0 +1,9 @@
+stateDiagram-v2
+  [*] --> Intended: settings enable
+  Intended --> Materialized: policy allow + fetch/cache
+  Materialized --> Parsed: manifest/components valid
+  Parsed --> Active: runtime refresh
+  Active --> DisabledIntent: settings disable
+  DisabledIntent --> Inactive: new runtime snapshot excludes
+  Inactive --> Orphaned: old cache marked
+  Orphaned --> Removed: retention cleanup

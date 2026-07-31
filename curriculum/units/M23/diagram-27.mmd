@@ -1,0 +1,10 @@
+flowchart TD
+  API["Agent coordinator"] --> PG["Postgres work/team/message state"]
+  API --> Q["durable trigger/queue"]
+  Q --> WORKER["ephemeral execution worker"]
+  WORKER --> TOOL["Tool/MCP side effects"]
+  WORKER --> PG
+  PG --> OUTBOX["outbox + idempotency ledger"]
+  OUTBOX --> Q
+  OBS["metadata trace"] --> API
+  OBS --> WORKER

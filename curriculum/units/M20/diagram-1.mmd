@@ -1,0 +1,14 @@
+flowchart TD
+  TU["assistant / tool_use"] --> LOOK["按 name 查 Tool"]
+  LOOK --> SCHEMA["inputSchema.safeParse"]
+  SCHEMA --> SEM["tool.validateInput"]
+  SEM --> PRE["PreToolUse Hooks"]
+  PRE --> MERGE["Hook proposal + updatedInput"]
+  MERGE --> PERM["rule / mode / tool check / classifier / user"]
+  PERM -->|"deny / stop"| PAIR["paired tool_result"]
+  PERM -->|"allow"| CALL["tool.call：副作用边界"]
+  CALL -->|"success"| POST["PostToolUse"]
+  CALL -->|"throw / abort"| FAIL["PostToolUseFailure"]
+  POST --> PAIR
+  FAIL --> PAIR
+  PAIR --> NEXT["后续 continuation 或本轮停止"]

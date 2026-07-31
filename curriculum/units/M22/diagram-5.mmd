@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant C as connected client
+  participant T as tools fetcher
+  participant R as resources fetcher
+  participant P as prompts fetcher
+  participant S as server
+  par capability-specific list
+    T->>S: tools/list
+    R->>S: resources/list
+    P->>S: prompts/list
+  end
+  S--xT: error
+  S-->>R: resources
+  S-->>P: prompts
+  T-->>C: []
+  R-->>C: resource adapters
+  P-->>C: command adapters

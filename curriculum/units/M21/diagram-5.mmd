@@ -1,0 +1,7 @@
+flowchart LR
+  A["market-A / git-x / demo / 1.0"] --> N1["demo:Read"]
+  B["market-B / git-y / demo / 1.0"] --> N2["demo:Read"]
+  N1 --> C{"显式 conflict"}
+  N2 --> C
+  C -->|"拒绝发布"| KEEP["保留上一 revision"]
+  C -->|"管理员选择/重命名"| NEXT["发布新 snapshot"]

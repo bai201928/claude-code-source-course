@@ -1,6 +1,6 @@
-# S0-S3 已确认知识摘要
+# S0-S4 已确认知识摘要
 
-状态：`S3 已发布`
+状态：`S4 已发布`
 
 S0 的目标不是让学习者记住四组 API，而是建立阅读后续 Claude Code 主线的基础动作：
 
@@ -84,6 +84,26 @@ H2 仍不承诺 Provider-specific SSE parser 或 Runtime streaming tool executio
 H3 / Harness `0.4.0` 在 H2 上累计 aggregate `ResultBudgetLedger`、revision-gated `CompactCoordinator`、scoped/trusted `InstructionCatalog` / `InstructionPipeline` 和 candidate-gated `MemoryStore` / `MemoryProjector`。Conversation、replacement、Compact、Instruction 与 Memory拥有独立 revision；request view与普通 Trace不回写正文。
 
 H3 仍不承诺 crash-durable Transcript/Resume、完整 CLAUDE.md discovery、自动 Runtime instruction/memory wiring、persistent/vector memory、PII/DLP enforcement、Hook/Skill/MCP/Plugin、多 Agent、Sandbox或分布式执行。
+
+## S4 已确认结论
+
+- Tool schema、semantic validation、Hook、Permission、handler 与 Sandbox 是不同边界。Hook rewrite 会改变待授权输入；当前快照没有一个覆盖所有路径的统一二次 validation 或 final pre-effect abort gate。
+- 多个 PreToolUse Hook 的 behavior 以更安全结果合流，但 input rewrite/provenance 不构成完整确定性 ledger；PostHook 可以阻止后续对话，不能回滚已经发生的副作用。
+- Skill 文档、Plugin bundle、marketplace source、model-visible namespace 和 runtime capability 是不同身份层。路径/cache/version 不是真实性证明，刷新也不是跨所有组件的全局事务。
+- Extension unload 改变后续可见性，不自动撤销已开始的 execution；企业实现需要 snapshot membership 与 acquired execution lease 分层。
+- MCP transport connected、initialize 成功、目录 list 成功和 capability snapshot 发布是不同完成点。server-qualified name 解决模型命名冲突，不解决远端信任。
+- MCP annotations 只是远端 hint；本地取消/timeout 不证明远端副作用回滚，session retry 也不提供 exactly-once。
+- Runtime Task、Work-item Task 和 Cron record 是三个 owner/状态机。Work-item `in_progress` 不证明存在活进程，Runtime `running` 也不证明存在协作工单。
+- ordinary claim 的 target lock 只保护同协议 check-and-write；busy-aware task-list lock 收窄 TOCTOU，但两者都不是分布式 serializable transaction。
+- Claude Code 当前 Work-item owner 没有 expiry、heartbeat 或 fencing token。sync Subagent 跟随 parent cancel，async/background 使用独立 owner 并需要显式停止。
+- Team 具有稳定 identity、shared task list、inbox 和 shutdown protocol，不是多个 Subagent 的别名。
+- file inbox 的 `read` 不是业务 ack，也没有 stable message ID/dedupe；Cron PID lock 与 `inFlight` 只收窄竞争窗口，不能跨 fire-before-persist crash 提供 exactly-once。
+
+## H4/H5 能力
+
+H4 把 ordered `ExtensionDecisionPipeline` 接入 ToolRegistry/Scheduler/Runtime，并加入独立的 revisioned `ExtensionRegistry` 与 transport-neutral `McpSession`。H5 再加入分立的 `WorkItemStore`、`RuntimeExecutionRegistry`、`TeamDirectory`、`AcknowledgedMailbox` 和 `ShutdownCoordinator`；`DurableScheduler` 作为 H6 foundation 先表达 stable pending trigger、commit 和 state recovery。Harness `0.5.0` 的 TypeScript/Python 行为镜像均通过累计回归。
+
+H4/H5 不等于 Claude Code 私有实现。当前仍未完成真实 Skill/Plugin discovery/marketplace、官方 MCP transport/OAuth、process-backed Subagent/Team、durable Transcript/Resume、数据库 CAS/queue/outbox、Sandbox、分布式 scheduler 与完整 OTel/cost ledger。
 
 ## 证据边界
 

@@ -1,0 +1,10 @@
+flowchart TD
+  LOCK["acquire task-list lock"] --> SNAP["read all work items"]
+  SNAP --> TARGET{"target claimable?"}
+  TARGET -->|"no"| DENY1["not found / completed / claimed"]
+  TARGET -->|"yes"| BLOCK{"blockers resolved?"}
+  BLOCK -->|"no"| DENY2["blocked"]
+  BLOCK -->|"yes"| BUSY{"claimant owns other work?"}
+  BUSY -->|"yes"| DENY3["agent_busy"]
+  BUSY -->|"no"| WRITE["write owner"]
+  WRITE --> UNLOCK["release"]

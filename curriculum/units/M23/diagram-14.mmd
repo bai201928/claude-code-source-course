@@ -1,0 +1,8 @@
+flowchart TD
+  MSG["SendMessage to local agent"] --> LIVE{"Runtime Task running?"}
+  LIVE -->|"yes"| QUEUE["pendingMessages -> next tool round"]
+  LIVE -->|"stopped / evicted"| DISK{"sidechain transcript exists?"}
+  DISK -->|"no"| FAIL["cannot resume"]
+  DISK -->|"yes"| REBUILD["filter + replacement + worktree"]
+  REBUILD --> RESUME["register async Runtime Task"]
+  RESUME --> RUN["continue with new user message"]

@@ -35,7 +35,7 @@ Invoke-AgentCheck 'Integrated TypeScript demo' $harnessRoot {
   npm run demo
 }
 Invoke-AgentCheck 'Integrated Python agent tests' "$harnessRoot\python" {
-  python -m unittest -v test_agent_runtime.py test_compact.py test_instructions.py test_memory.py test_tool_scheduler.py test_streaming.py
+  python -m unittest -v test_agent_runtime.py test_compact.py test_instructions.py test_memory.py test_tool_scheduler.py test_extension_decision.py test_extension_registry.py test_mcp_session.py test_work_coordinator.py test_streaming.py
 }
 
 Write-Host "Integrated Agent regression: $passed/4 checks passed (including H2/H1/S0)"

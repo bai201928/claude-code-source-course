@@ -1,13 +1,14 @@
 {
   "name": "claude-code-study-mini-agent-harness",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "A clean-room, portfolio-scale agent harness and coordination control plane evolved from the Claude Code source course.",
   "scripts": {
     "agent": "node --env-file-if-exists=.env.local typescript/agent/cli.ts",
     "demo": "node typescript/agent/demo.ts",
-    "test": "node typescript/agent/config.test.ts && node typescript/agent/runtime.test.ts && node typescript/agent/compact.test.ts && node typescript/agent/instructions.test.ts && node typescript/agent/memory.test.ts && node typescript/agent/openaiCompatibleAdapter.test.ts && node typescript/agent/tools.test.ts && node typescript/agent/toolScheduler.test.ts && node typescript/agent/extensionDecision.test.ts && node typescript/agent/extensionRegistry.test.ts && node typescript/agent/mcpSession.test.ts && node typescript/agent/workCoordinator.test.ts && node typescript/agent/stream.test.ts",
+    "demo:release": "node typescript/agent/releaseDemo.ts",
+    "test": "node typescript/agent/config.test.ts && node typescript/agent/runtime.test.ts && node typescript/agent/compact.test.ts && node typescript/agent/instructions.test.ts && node typescript/agent/memory.test.ts && node typescript/agent/openaiCompatibleAdapter.test.ts && node typescript/agent/tools.test.ts && node typescript/agent/toolScheduler.test.ts && node typescript/agent/extensionDecision.test.ts && node typescript/agent/extensionRegistry.test.ts && node typescript/agent/mcpSession.test.ts && node typescript/agent/workCoordinator.test.ts && node typescript/agent/transcriptRecovery.test.ts && node typescript/agent/securityBoundary.test.ts && node typescript/agent/observabilityGovernance.test.ts && node typescript/agent/releaseControlPlane.test.ts && node typescript/agent/stream.test.ts",
     "test:all": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-agent-regression.ps1",
     "typecheck": "powershell -NoProfile -ExecutionPolicy Bypass -File typescript/typecheck.ps1"
   },

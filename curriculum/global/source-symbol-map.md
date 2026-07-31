@@ -1,6 +1,6 @@
-# S0-S4 源码符号地图
+# S0-S5 源码符号地图
 
-状态：`S4 已发布`
+状态：`S5 已发布，课程完成`
 
 行号只作当前快照辅助，稳定定位采用“路径 -> 符号 -> 决定性分支”。
 
@@ -82,5 +82,16 @@
 | M23 | `src/tools/AgentTool/` -> run/resume/fork | sync/async cancellation、sidechain resume、worktree fallback、fork context 与递归 guard |
 | M23 | TeamCreate / `teamHelpers.ts` / mailbox / SendMessage | Team identity、shared task list、direct/broadcast routing 与 shutdown handshake |
 | M23 | `src/utils/cronTasks.ts` / `cronScheduler.ts` / `cronTasksLock.ts` | PID owner、missed/jitter、fire-before-persist 与非 exactly-once 边界 |
+| M24 | `src/utils/sessionStorage.ts` -> enqueue/write/flush/read/relink | await enqueue、物理写入、cleanup drain 与 crash window 分层 |
+| M24 | Resume/Fork/session restore paths -> JSONL parse / chain rebuild / unresolved filter | partial tail、middle corruption、parent DAG、parallel sibling、message-level unresolved 过滤与 identity 分叉 |
+| M24 | background/Cron recovery and sidechain paths | 旧 process/controller 不复活，新 attempt 接管；缺失 result 不证明 effect 未发生 |
+| M25 | Sandbox enable/auto-allow/runtime adapter paths | Permission deny/ask、enablement、platform support、excluded command 与 strict fail-closed 分支 |
+| M25 | managed settings / remote policy refresh / trust paths | source、revision、交互确认与 noninteractive policy publication 边界 |
+| M25 | secret substitution/subprocess env 与 Plugin/MCP policy paths | model/execution/storage 暴露面分离；path/hash 不证明 publisher authenticity |
+| M26 | API logging/tracing/usage paths -> interaction/attempt/span identity | exact span 主路径、legacy recent-span fallback、TTFT missing 与 cumulative usage |
+| M26 | analytics/cost/limit/task budget paths | metadata/truncated content、price uncertainty、Provider quota、organization policy 与 request hint 分层 |
+| M27 | `query.ts` -> `QueryDeps` | 窄依赖注入证明 port binding，不是完整 composition root |
+| M27 | CLI update / graceful shutdown / migration paths | 单机安装竞争、bounded best-effort cleanup、write-new-delete-old 与非 ACID 边界 |
+| M27 | bridge version/epoch / deployment environment paths | compatibility floor、stale-worker fencing 与 analytics metadata 的有限证明力 |
 
 已知快照边界：`src/types/message.ts`、`src/types/utils.ts`、`src/types/tools.ts` 与 `src/query/transitions.ts` 缺失，不能声称原项目完整 typecheck，也不能从 import 名称补造完整类型声明。

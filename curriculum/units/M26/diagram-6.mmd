@@ -1,0 +1,8 @@
+flowchart LR
+  R["run/tool/model"] --> E["closed TelemetryEvent"]
+  E --> O["OpenTelemetryPort"]
+  O -->|"success"| X["external exporter"]
+  O -->|"throws"| F["observerFailureCount + 1"]
+  F -.不回写.-> R
+  P["sensitive evidence"] --> A["separate artifact store + RBAC"]
+  A --> REF["approved reference"]

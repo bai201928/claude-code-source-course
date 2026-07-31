@@ -1,0 +1,8 @@
+flowchart TD
+  R["ExecutionRequest rev=7"] --> V1{"current rev == 7?"}
+  V1 -->|"否"| STALE["deny stale_policy"]
+  V1 -->|"是"| CHECK["worker/capability/provenance"]
+  CHECK --> RES["resolve secret refs"]
+  RES --> V2{"current rev still 7?"}
+  V2 -->|"否"| STALE
+  V2 -->|"是"| EXEC["SandboxPort.execute"]

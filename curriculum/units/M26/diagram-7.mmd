@@ -1,0 +1,11 @@
+gantt
+  title 同一请求的时间边界
+  dateFormat X
+  axisFormat %L
+  section retry 1
+  setup/request/error :a1, 0, 120
+  section backoff
+  wait              :a2, 120, 260
+  section fallback attempt
+  setup to message_start :a3, 260, 340
+  stream to completion   :a4, 340, 620

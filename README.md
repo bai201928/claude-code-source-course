@@ -4,7 +4,7 @@
 
 这个仓库同时是一套**源码级 Claude Code 教材**、一条**可复核的教材生产流水线**，以及一个随学习逐步长成的 **Mini Agent Harness**。目标不是记住某几个私有函数名，而是获得可以迁移到企业 Agent 系统的能力：看懂源码、还原运行机制、验证关键判断、修改与复现设计，并在面试中把代码事实讲成系统设计。
 
-当前进度：`S0-S4 已原子发布` · `M01-M23 共 23 个正式单元` · `1 个串联复习章` · `Harness 0.5.0 / H5`
+当前进度：`S0-S5 已原子发布` · `M01-M27 共 27 个正式单元` · `1 个串联复习章` · `Harness 0.7.0 / H7` · `Claude Code CLI 教材已完成`
 
 ## 它解决什么问题
 
@@ -33,7 +33,7 @@ flowchart LR
 - 单元规模服从机制闭环，可以动态合并、拆分和调整；
 - 信息密集处使用局部流程图、时序图和状态图，既帮助第一次理解，也方便复习。
 
-建议从 [S0 发布说明](curriculum/stages/S0/release-summary.md) 开始，再读 [S1 发布说明](curriculum/stages/S1/release-summary.md) 和 [S2 发布说明](curriculum/stages/S2/release-summary.md)。完成 M01-M09 后，可以用 [I01：从一次启动到安全收尾](curriculum/interludes/I01-runtime-shell-review/final.md) 串起前九章的核心机制。
+建议从 [S0 发布说明](curriculum/stages/S0/release-summary.md) 开始，再按 [S1](curriculum/stages/S1/release-summary.md)、[S2](curriculum/stages/S2/release-summary.md)、[S3](curriculum/stages/S3/release-summary.md)、[S4](curriculum/stages/S4/release-summary.md) 和 [S5](curriculum/stages/S5/release-summary.md) 推进。完成 M01-M09 后，可以用 [I01：从一次启动到安全收尾](curriculum/interludes/I01-runtime-shell-review/final.md) 串起前九章的核心机制。
 
 想先判断这套教材的深度，可以直接阅读五个 S2 正式单元：
 
@@ -62,6 +62,15 @@ S4 把一次 Tool Loop 继续推进到执行治理、扩展交付和长生命周
 - [M23：一份工作怎样穿过 Task、Subagent 与 Team](curriculum/units/M23/final.md)，拆开 Runtime Task、Work-item、Subagent、Team、Mailbox、shutdown 与 Cron 的 owner 和恢复边界。
 
 S4 四章共 73 张 Mermaid，均从完整正文实际渲染；事实 B 与教学闸门全部 `PASS / 0`。M21-M23 的 FACT_A 计数来自提示要求反证的常见错误命题，不是正文遗留缺陷。
+
+S5 把课程闭合到恢复、安全治理、可观测性和生产发布：
+
+- [M24：进程退出后如何继续](curriculum/units/M24/final.md)，从 append-only Transcript、容错 DAG 重建走到 Normal Resume、Fork、background/Cron 与 indeterminate effect；
+- [M25：模型能调用不等于系统安全](curriculum/units/M25/final.md)，拆开 Permission、Sandbox、managed policy、worker identity、secret boundary 和扩展供应链；
+- [M26：看不见就无法治理](curriculum/units/M26/final.md)，建立 attempt identity、TTFT、usage/cost/evaluation、tenant reservation 和 metadata-only telemetry；
+- [M27：把 Harness 交到生产](curriculum/units/M27/final.md)，完成 protocol/schema/policy compatibility、readiness、canary、SLO、drain 和 effect-aware rollback。
+
+S5 四章共 78 张 Mermaid，均从完整正文实际渲染；事实 B 与教学闸门全部 `PASS / 0`。教材在 M27 完成，不创建 M28 或 S6。
 
 ### 2. Codex 主控 + Claude Code/DeepSeek 双闸门
 
@@ -112,6 +121,10 @@ flowchart LR
   AR --> TRACE["Metadata-only Trace"]
   WORK["WorkItemStore + RuntimeExecution"] -. "independent control plane" .-> AR
   TEAM["Team + Mailbox + Scheduler"] --> WORK
+  TRANSCRIPT["Transcript + Recovery + Resume"] -. "new attempt" .-> AR
+  SECURITY["Policy + SecurityExecutor"] --> SANDBOX["SandboxPort"]
+  TELEMETRY["Telemetry + Cost / Evaluation"] --> GOV["TenantGovernor"]
+  RELEASE["ReleaseController"] --> WORKERS["canary / drain / rollback"]
 ```
 
 它已经具备：
@@ -129,6 +142,10 @@ flowchart LR
 - transport-neutral McpSession、handshake、generation/revision、qualified tool snapshot、fail-closed refresh、disconnect 与显式 retry policy；
 - 独立 WorkItem/RuntimeExecution owner、lease/heartbeat/reclaim/fencing、linked/detached cancel、TeamDirectory 与 shutdown handshake；
 - message ID/dedupe/redelivery/explicit ack 的 Mailbox，以及 stable pending trigger/commit/recovery 的 H6 scheduler foundation；
+- append-only Transcript、容错 RecoveryReducer、Normal/Fork Resume、effect/background recovery 与 pending-trigger takeover；
+- revisioned policy、worker/capability constraint、trusted-boundary secret resolution 与 fail-closed Sandbox port；
+- closed metadata telemetry、usage delta、versioned cost/evaluation、tenant reservation 与 bounded FIFO queue；
+- release manifest compatibility、readiness、stable canary、SLO guard、drain 与 effect-aware rollback；
 - OpenAI-compatible Chat Completions Provider；
 - permission-aware Tool Loop 与 `read/list/search/command` 工作区工具；
 - schema 后动态安全分类、safe batch、exclusive barrier、固定并发上限与按 call 原顺序提交；
@@ -137,7 +154,7 @@ flowchart LR
 - fixed-capacity、single-consumer 的 provider-neutral stream，支持背压和 close-to-abort/cleanup；
 - TypeScript 主实现、Python 行为镜像与累计回归。
 
-它刻意不追求复刻 Claude Code，也不复制其私有实现。项目只选择足以展示核心工程判断的机制，并为未来的流式聚合、工具并发、Context 压缩、Hook/Skill/MCP、Subagent、恢复和 Sandbox 留出真实演进路径。更完整的能力与边界见 [Mini Agent Harness README](mini-agent-harness/README.md)。
+它刻意不追求复刻 Claude Code，也不复制其私有实现。项目只选择足以展示核心工程判断的机制；课程内已经闭合工具并发、Context、扩展、多 Agent、恢复、安全治理和发布控制面，生产级持久化、真实 Sandbox、分布式协调与平台集成保留为明确 adapter 边界。更完整的能力与边界见 [Mini Agent Harness README](mini-agent-harness/README.md)。
 
 ## 快速开始
 
@@ -147,6 +164,7 @@ flowchart LR
 cd mini-agent-harness
 npm ci
 npm run demo
+npm run demo:release
 npm test
 npm run typecheck
 npm run test:all
@@ -165,7 +183,7 @@ npm run agent -- --prompt "先列出五个 Markdown 文件，再总结项目结�
 npm run agent -- --grant-executable rg
 ```
 
-当前验证基线为 TypeScript `105/105`（包含 ExtensionDecision `7/7`、ExtensionRegistry `8/8`、McpSession `9/9`、WorkCoordinator `12/12`），strict typecheck 通过；Python integrated `79/79`、ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成累计回归 `4/4` 全部通过。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
+当前验证基线为 TypeScript `144/144`、strict typecheck 通过；Python integrated `116/116`、ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成累计回归 `4/4` 全部通过。Agent demo、release-control demo 与 Docker Compose 静态配置通过。真实 API 冒烟与确定性协议测试分开，二者不会互相冒充。
 
 ## 当前课程地图
 
@@ -177,7 +195,7 @@ npm run agent -- --grant-executable rg
 | S2 | 消息、Query、模型请求与 Tool Loop | M10-M15 已发布 |
 | S3 | Context、压缩、指令与记忆 | M16-M19 已发布 |
 | S4 | 执行治理、扩展生态、Task 与多 Agent | M20-M23 已发布 |
-| S5 | Transcript 恢复、安全、观测与生产发布 | M24-M27，待生成 |
+| S5 | Transcript 恢复、安全、观测与生产发布 | M24-M27 已发布，课程完成 |
 
 课程没有最低章节数。当前设计包是一张工作地图，不是不可修改的目录合同；后续研究可以合章、拆章或调整顺序，但不能因此遗漏重要机制或破坏 Harness 契约。
 
@@ -199,7 +217,7 @@ npm run agent -- --grant-executable rg
 
 ## 证据与公开边界
 
-这个仓库公开原创教材、实验、Harness 与审查记录，不分发本地 Claude Code 源码快照、Graphify 缓存或外部参考仓库。教材中的源码事实来自特定本地快照，运行验证、官方公开行为与设计推断会被明确区分。M14 的 bounded stream、M15 的统一 ToolScheduler，H3 的 Context/Memory owner，以及 H4/H5 的 ExtensionRegistry、McpSession、lease/fencing、acknowledged mailbox 和 stable pending trigger 都是 clean-room 迁移设计，不代表复制 Claude Code 私有实现。
+这个仓库公开原创教材、实验、Harness 与审查记录，不分发本地 Claude Code 源码快照、Graphify 缓存或外部参考仓库。教材中的源码事实来自特定本地快照，运行验证、官方公开行为与设计推断会被明确区分。M14 的 bounded stream、M15 的统一 ToolScheduler，H3 的 Context/Memory owner，H4/H5 的扩展与协调控制面，以及 H6/H7 的恢复、安全、治理和发布控制面都是 clean-room 迁移设计，不代表复制 Claude Code 私有实现。
 
 如需复现完整源码研究流程，请自行合法准备源码到 `claude-code-CLI/`。该目录以及 `repos/`、`graphify-out/`、`.env*`、本机 Codex/Claude 配置和运行态审查工作区均被 Git 忽略。
 
@@ -218,11 +236,15 @@ npm run agent -- --grant-executable rg
 - 为什么 Hook allow 不能越过 Permission policy，rewrite 后为何必须再次验证和授权。
 - 为什么 extension source identity、model-visible namespace、MCP session generation 与 capability revision 不能混成一个版本号。
 - 为什么 Work-item、Runtime execution、Team identity、Mailbox ack 与 Cron trigger 必须由不同 owner 管理。
+- 为什么 Transcript 恢复必须把证据、live runtime 和外部 effect 分开，missing result 也不能触发盲目重试。
+- 为什么 Permission 之后仍需 policy revision、worker identity、secret boundary 和真实 Sandbox adapter。
+- 为什么 telemetry observer 不能改变执行结果，cumulative usage 又必须按 attempt 转为 delta。
+- 为什么生产回滚只能切换路由和 admission，无法撤销已经发生的 Tool effect。
 
 一条准确的简历描述是：
 
-> 基于 Claude Code 源码研究设计并实现 TypeScript/Python Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、并发 Tool Loop、Context/Compact/Memory、Hook/Permission 决策、扩展与 MCP capability lifecycle，以及带 lease/fencing、ack 和稳定 trigger 的多 Agent 协调控制面；用源码核验、双语言实验和累计回归验证关键契约。
+> 基于 Claude Code 源码研究设计并实现 TypeScript/Python Agent Harness：以 revisioned conversation 为状态核心，完成模型适配、并发 Tool Loop、Context/Memory、扩展与 MCP、多 Agent 协调，并加入 Transcript 恢复、fail-closed 安全 envelope、metadata-only 成本/配额治理和可回滚发布控制面；以 144 个 TypeScript 与 116 个 Python 协议测试验证取消、顺序提交、恢复和灰度边界。
 
 ---
 
-下一步进入 S5/M24。剩余 M24-M27 按价值优先闭合 Transcript/Resume、Sandbox/security、observability/cost 与生产发布；不设置 S6 或 M28。S5 完成时继续同步更新教材索引和 Mini Agent Harness，并保持恢复、安全与数据一致性机制优先于管理 UI 和重复入口。
+Claude Code CLI 教材已经在 S5/M27 完成。推荐学习顺序是 S0-S2 建立完整运行主链，I01 复习后进入 S3-S5；Harness 可作为简历项目继续按真实业务需要接入 durable store、真实 Sandbox、生产 telemetry 与部署平台，但这些后续工程不再扩展本课程章节。

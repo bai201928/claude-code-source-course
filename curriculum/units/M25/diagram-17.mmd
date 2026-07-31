@@ -1,0 +1,7 @@
+flowchart LR
+  API["AgentRunController"] --> AUTH["CapabilityAuthorizationService"]
+  AUTH --> POLICY["RevisionedPolicyRepository"]
+  AUTH --> QUEUE["TrustedExecutionQueue"]
+  QUEUE --> WORKER["IsolatedWorker"]
+  WORKER --> VAULT["Vault/KMS by secret ref"]
+  WORKER --> AUDIT["RedactedAuditPort"]

@@ -1,0 +1,7 @@
+flowchart LR
+  ID["tenant/session stable identity"] --> BUCKET["stable bucket 0..99"]
+  BUCKET --> ROUTE{"bucket < trafficPercent?"}
+  ROUTE -->|"yes"| C["candidate pool"]
+  ROUTE -->|"no"| A["active pool"]
+  C --> TRACE["releaseId in metadata"]
+  A --> TRACE

@@ -1,0 +1,13 @@
+sequenceDiagram
+  participant C as control plane
+  participant W as worker
+  participant R as secret broker
+  C->>W: request(policyRevision=7)
+  W->>R: resolve secret reference
+  C->>C: policy refresh 7 -> 8
+  R-->>W: secret value
+  alt worker 不复查 revision
+    W->>W: 按旧策略执行
+  else worker 复查 current revision
+    W-->>C: stale_policy, no effect
+  end

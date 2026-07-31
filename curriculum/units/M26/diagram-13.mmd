@@ -1,0 +1,10 @@
+stateDiagram-v2
+  [*] --> Pending: enqueue
+  Pending --> Sending: take ordered batch
+  Sending --> Pending: retryable failure / requeue front
+  Sending --> Delivered: send success
+  Sending --> Dropped: failure limit reached
+  Pending --> Closed: close clears pending
+  Delivered --> [*]
+  Dropped --> [*]
+  Closed --> [*]

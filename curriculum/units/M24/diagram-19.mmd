@@ -1,0 +1,8 @@
+flowchart LR
+  SCHED["DurableScheduler state"] --> PENDING["stable pending trigger"]
+  BG["Background journal"] --> ORPHAN{"latest 是否 terminal"}
+  ORPHAN -->|"否"| SUP["Supervisor"]
+  ORPHAN -->|"是"| DONE["保持 terminal"]
+  PENDING --> SUP
+  SUP --> NEW["new attempt + same idempotency key"]
+  NEW --> COMMIT["effect / trigger 显式 commit"]

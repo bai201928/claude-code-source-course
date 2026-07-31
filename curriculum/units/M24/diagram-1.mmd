@@ -1,0 +1,15 @@
+flowchart TD
+  INPUT["用户消息被接受"] --> REC["recordTranscript 请求记录"]
+  REC --> QUEUE["Project 内存写队列"]
+  QUEUE --> APPEND["JSONL append"]
+  APPEND --> CRASH["任意位置可能崩溃"]
+  CRASH --> PARSE["逐行解析可用记录"]
+  PARSE --> DAG["选择 leaf 并重建消息 DAG"]
+  DAG --> CLEAN["清理未配对 Tool 与无效尾部"]
+  CLEAN --> KIND{"Normal 还是 Fork"}
+  KIND -->|"Normal"| ADOPT["复用 session 与 transcript"]
+  KIND -->|"Fork"| ISOLATE["新 session 与身份隔离"]
+  ADOPT --> OWNERS["各状态 owner 分别恢复"]
+  ISOLATE --> OWNERS
+  OWNERS --> EFFECT["副作用按 prepared / indeterminate / committed 分类"]
+  EFFECT --> CONTINUE["继续、人工裁决或幂等重投"]

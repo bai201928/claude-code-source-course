@@ -1,0 +1,8 @@
+flowchart TD
+  A["assistant message"] --> USES["收集本 message 的 tool_use IDs"]
+  USES --> NONE{"没有 tool_use?"}
+  NONE -->|"是"| KEEP["保留"]
+  NONE -->|"否"| ALL{"是否全部缺少 tool_result?"}
+  ALL -->|"是"| DROP["删除整条 assistant message"]
+  ALL -->|"否"| KEEP
+  DROP --> NOTE["不能据此判断外部副作用未发生"]

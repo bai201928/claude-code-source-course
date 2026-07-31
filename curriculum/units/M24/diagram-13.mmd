@@ -1,0 +1,9 @@
+flowchart TB
+  LOG["LogOption / Transcript projection"] --> MSG["Message history owner"]
+  LOG --> FH["FileHistory owner"]
+  LOG --> ATTR["Attribution owner"]
+  LOG --> COLLAPSE["ContextCollapse owner"]
+  LOG --> REPL["ContentReplacement owner"]
+  LOG --> META["Session metadata owner"]
+  LOG --> COST["Cost tracker"]
+  LOG --> AGENT["Agent/model bootstrap"]

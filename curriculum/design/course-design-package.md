@@ -1,6 +1,6 @@
 # Claude Code CLI 源码教材全课程设计包
 
-状态：`S4 已发布，M24-M27 按价值优先继续实施`
+状态：`S0-S5 已发布，M01-M27 课程完成`
 
 最后校准：`2026-07-31`
 
@@ -88,7 +88,7 @@ flowchart TD
 | S2 单 Agent 主循环 | M10-M15 | 消息、Query、请求、模型流、Tool Loop | H2 / 0.3.0 | 已发布 |
 | S3 Context 与记忆 | M16-M19 | 可控上下文、压缩事务、指令、记忆 | H3 / 0.4.0 | 已发布 |
 | S4 扩展、任务与多 Agent | M20-M23 | 执行治理、扩展 ABI、Task、Subagent/Team | H4-H5 / 0.5.0 | 已发布 |
-| S5 恢复与生产治理 | M24-M27 | Transcript/Resume、安全、观测、部署 | H6-H7 | 待生成 |
+| S5 恢复与生产治理 | M24-M27 | Transcript/Resume、安全、观测、部署 | H6-H7 / 0.7.0 | 已发布 |
 
 S3、S4、S5 各自完成时更新根 README、Mini Agent Harness README、契约、架构、全局索引和累计回归。单元在阶段原子发布前只到 `release-candidate`，不提前创建 `final.md`。
 
@@ -263,20 +263,20 @@ flowchart LR
 | TypeScript/Node 源码阅读 | M01-M04 | 全课程随用随讲 | 已覆盖 |
 | CLI、配置、信任、状态、生命周期 | M05-M09 | M18、M25-M27 | 已覆盖 |
 | 消息、Query、请求、模型流、Tool Loop | M10-M15 | M16-M27 | 已覆盖 |
-| Context budget、snip/microcompact | M13、M16 | M17、M19、M26 | 已规划 |
-| auto compact、collapse、Prompt Cache | M17 | M19、M24 | 已规划 |
-| CLAUDE.md、Rules、system、attachments | M18 | M21、M25 | 已规划 |
-| Session Memory 与 scope/retention | M19 | M24-M27 | 已规划 |
-| Tool、Permission、Hook | M15、M20 | M22、M25-M27 | 已规划 |
-| Skill/Plugin 生命周期与供应链 | M21 | M23、M25 | 已规划 |
-| MCP Tool/Resource/Prompt 与连接 | M22 | M23、M25-M27 | 已规划 |
+| Context budget、snip/microcompact | M13、M16 | M17、M19、M26 | 已覆盖 |
+| auto compact、collapse、Prompt Cache | M17 | M19、M24 | 已覆盖 |
+| CLAUDE.md、Rules、system、attachments | M18 | M21、M25 | 已覆盖 |
+| Session Memory 与 scope/retention | M19 | M24-M27 | 已覆盖 |
+| Tool、Permission、Hook | M15、M20 | M22、M25-M27 | 已覆盖 |
+| Skill/Plugin 生命周期与供应链 | M21 | M23、M25 | 已覆盖 |
+| MCP Tool/Resource/Prompt 与连接 | M22 | M23、M25-M27 | 已覆盖 |
 | Runtime Task / Work-item / background / Cron | M01、M23 | M24、M26-M27 | 已区分 |
-| Subagent / Agent Team / mailbox | M23 | M24-M27 | 已规划 |
-| Transcript / Resume / Fork / recovery | M10、M24 | M27 | 已规划 |
+| Subagent / Agent Team / mailbox | M23 | M24-M27 | 已覆盖 |
+| Transcript / Resume / Fork / recovery | M10、M24 | M27 | 已覆盖 |
 | Permission 与 Sandbox | M20、M25 | M27 | 已区分 |
-| 日志、Trace、评估、Token/延迟/成本 | M14-M15、M26 | M27 | 已规划 |
-| 并发、分布式、幂等、配额 | M15、M23-M26 | M27 | 已规划 |
-| 灰度、回滚、SLI/SLO、部署 | M26-M27 | M25 | 已规划 |
+| 日志、Trace、评估、Token/延迟/成本 | M14-M15、M26 | M27 | 已覆盖 |
+| 并发、分布式、幂等、配额 | M15、M23-M26 | M27 | 已覆盖 |
+| 灰度、回滚、SLI/SLO、部署 | M26-M27 | M25 | 已覆盖 |
 | TypeScript/Python clean-room | 每个核心机制 | M27 总回归 | 持续要求 |
 | Java/Spring/LangGraph 迁移 | 机制附近即时出现 | M23-M27 强化 | 持续要求 |
 | 资深大厂面试表达 | 每单元自然融入 | M27 系统设计 | 持续要求 |
@@ -315,8 +315,8 @@ flowchart LR
 | H3 | M16-M19 | aggregate budget、CompactTransaction、InstructionPipeline、MemoryStore | 已发布 / 0.4.0 |
 | H4 | M20-M22 | Tool/Hook decision ABI、Skill/Plugin registry、MCP session/lifecycle | 已发布于 0.5.0 |
 | H5 | M23 | TaskStore、lease、child scope、TeamDirectory、Mailbox | 已发布 / 0.5.0 |
-| H6 | M23-M24 | DurableScheduler、TranscriptStore、RecoveryReducer、ResumeCoordinator | scheduler foundation 已完成，其余待 M24 |
-| H7 | M25-M27 | Sandbox/Worker、policy、observability、quota、部署与回滚 | 待实现 |
+| H6 | M23-M24 | DurableScheduler、TranscriptStore、RecoveryReducer、ResumeCoordinator | 已发布于 0.7.0 |
+| H7 | M25-M27 | Sandbox/Worker、policy、observability、quota、部署与回滚 | 已发布 / 0.7.0 |
 
 每次合入记录新增契约、状态 owner、失败语义、兼容影响和累计回归。`merge`、`defer`、`reject` 由证据与架构决定。H3-H7 是能力里程碑，不要求一一对应课程阶段。
 
@@ -336,4 +336,4 @@ M11 标杆要求继续有效：真实问题驱动；决定性源码解释控制�
 - 真实 API 冒烟只证明 Provider 可达；核心行为以确定性 fake、失败注入和累计回归验证。
 - 不执行源码 Hash、重哈希、漂移检查、句子级 Claim 或 Graphify 回写。
 
-M16-M27 是当前最终工作地图。调整尚未发布单元时必须同步依赖、主题覆盖、TypeScript 首讲位置、H3-H7 路线、README 和阶段状态。已经发布的 M01-M15 不重排；合章不能删除重要机制、失败语义、实验、Harness 契约或企业迁移。最终教材在 S5/M27 完成，不设置 S6，不创建 M28。
+M01-M27 已按当前工作地图全部发布。后续若修订已发布内容，仍须同步依赖、主题覆盖、TypeScript 首讲位置、H3-H7 路线、README 和阶段状态，且不能删除重要机制、失败语义、实验、Harness 契约或企业迁移。教材在 S5/M27 完成，不设置 S6，不创建 M28。

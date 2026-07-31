@@ -1,0 +1,8 @@
+flowchart LR
+  API["Spring API"] --> TX["DB transaction"]
+  TX --> BUSINESS["business row"]
+  TX --> OUTBOX["effect/outbox row"]
+  WORKER["worker"] --> OUTBOX
+  WORKER --> EXT["external API + idempotency key"]
+  EXT --> RECON["reconcile/commit"]
+  RECON --> OUTBOX

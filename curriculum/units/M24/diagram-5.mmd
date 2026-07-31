@@ -1,0 +1,7 @@
+flowchart LR
+  A["recordTranscript resolve"] --> B["entry 已进入 Project 控制"]
+  B --> C["flush resolve"]
+  C --> D["本地 append 操作完成"]
+  D -. "不能自动推出" .-> E["断电后必然保留"]
+  D -. "不能自动推出" .-> F["远程副本已提交"]
+  D -. "不能自动推出" .-> G["外部工具 exactly-once"]

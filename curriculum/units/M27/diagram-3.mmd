@@ -1,0 +1,8 @@
+flowchart LR
+  CORE["Agent domain owners"] --> PORT["Model / Store / Queue / Sandbox / Telemetry ports"]
+  CR["composition root"] --> AD["production adapters"]
+  CR --> CFG["validated config snapshot"]
+  CR --> SEC["secret resolver at process edge"]
+  AD --> PORT
+  CFG --> CORE
+  SEC --> AD

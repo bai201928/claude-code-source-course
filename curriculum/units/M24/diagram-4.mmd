@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant Q as QueryEngine
+  participant P as Project
+  participant M as Memory Queue
+  participant F as JSONL File
+  Q->>P: await recordTranscript(messages)
+  P->>M: void enqueueWrite(entry)
+  P-->>Q: recordTranscript resolve
+  Note over Q,F: 此处进程崩溃，entry 仍可能只在内存
+  M->>F: timer 后 append batch
+  F-->>M: append 完成

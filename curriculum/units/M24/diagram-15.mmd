@@ -1,0 +1,8 @@
+flowchart TD
+  SOURCE["source session S1"] --> MODE{"恢复模式"}
+  MODE -->|"Normal"| N1["sessionId = S1"]
+  N1 --> N2["adopt S1.jsonl"]
+  N2 --> N3["可接管 saved worktree"]
+  MODE -->|"Fork"| F1["sessionId = fresh S2"]
+  F1 --> F2["写 S2.jsonl + forkedFrom"]
+  F2 --> F3["不接管 S1 worktree owner"]

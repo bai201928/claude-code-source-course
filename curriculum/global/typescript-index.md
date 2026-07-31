@@ -1,6 +1,6 @@
 # TypeScript 与 Node.js 难点索引
 
-状态：`S4 已发布`
+状态：`S5 已发布，课程完成`
 
 | 难点 | 首次系统讲解 | 源码/机制强化 | 当前掌握边界 | 后续复用 |
 | --- | --- | --- | --- | --- |
@@ -59,5 +59,13 @@
 | linked/detached cancellation ownership | M23 | Subagent/RuntimeExecution AbortController | background 是呈现模式，detached 是资源 owner 决策 | structured concurrency |
 | at-least-once mailbox 与 explicit ack | M23 | message ID、recipient sequence、redelivery | delivery/read/ack/business effect 分层 | queue、outbox/inbox |
 | stable trigger 与 recovery state | M23 | pending trigger、commit、recurring advance | 恢复可重投同一 identity，但不承诺外部 exactly-once | scheduler、workflow engine |
+| append-only record 与 pure reducer | M24 | TranscriptRecord、JSONL decode、parent DAG、RecoveryReducer | evidence owner 与 recovered view 分离；partial view 必须显式标记 | event sourcing、审计日志 |
+| identity remap 与 conservative union | M24 | normal/fork resume、effect/background state | fork 重写 identity；indeterminate 不能被 false 收窄为 failed | workflow recovery、灾备 |
+| readonly policy snapshot 与 port | M25 | PolicyEngine、ExecutionRequest、SandboxPort | revision/worker/capability 必须在 effect 前重验；interface 不证明真实隔离 | policy engine、hexagonal architecture |
+| closed metadata union | M26 | TelemetryEvent、observer port、EvaluationRecord | 类型关闭正文入口有助于审计，但不能替代 runtime validation | OTel semantic convention、DLP |
+| cumulative-to-delta 与 idempotent ledger | M26 | attempt snapshot、event ID collision、price version | 累计快照不能直接求和；未知不是零 | billing、metrics、event ledger |
+| reservation 与 bounded FIFO | M26 | TenantGovernor、active reservation、queue promotion | admission 先占容量，cancel 与 commit 释放路径不同 | bulkhead、quota service |
+| compatibility predicate 与 staged state machine | M27 | ReleaseManifest、read/write schema、canary stage | readiness 不等于进程存活；回滚读兼容必须前置验证 | rolling upgrade、schema evolution |
+| stable hash bucket 与 drain ownership | M27 | deterministic route、active work count、rollback | 稳定分桶避免请求漂移；drain 只拒绝新工作 | load balancer、worker lifecycle |
 
-S0-S4 仍不是 TypeScript 的最终教程。后续机制首次引入尚未覆盖的语言能力时，继续按“最小语义 -> 当前源码作用 -> Java/Python 对照 -> 可运行验证”补齐。
+M01-M27 已覆盖阅读本课程主线所需的 TypeScript/Node 能力。索引不是通用 TypeScript 教程；后续 Harness 演进若引入新语言机制，仍按“最小语义 -> 当前作用 -> Java/Python 对照 -> 可运行验证”补齐。

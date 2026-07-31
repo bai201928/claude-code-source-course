@@ -1,0 +1,7 @@
+flowchart LR
+  T["Transcript\n消息与事件证据"] --> R["Recovery Reducer\n重建可继续视图"]
+  LIVE["旧进程运行状态\ncontroller/stream/process"] -. "不能反序列化复活" .-> R
+  WORLD["外部副作用\n文件/API/数据库"] --> J["Effect Journal\n提交证据"]
+  J --> R
+  R --> NEW["新 attempt"]
+  NEW --> WORLD

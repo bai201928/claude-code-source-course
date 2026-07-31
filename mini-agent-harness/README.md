@@ -2,7 +2,7 @@
 
 这是随 Claude Code 源码教材累计演进的 clean-room Agent Harness。它不复制 Claude Code 私有实现；当前目标是用一条边界清楚、可运行、可测试的 Agent 纵切和协调控制面，证明学习者真正理解了消息、状态、请求投影、模型调用、工具治理、扩展能力、长生命周期工作、取消和恢复怎样协作。
 
-当前版本：`H5 / 0.5.0`（S4 正式里程碑，包含 H6 scheduler foundation）
+当前版本：`H7 / 0.7.0`（S5 最终课程里程碑）
 
 ## 现在已经能做什么
 
@@ -40,6 +40,11 @@ flowchart LR
   TEAM["TeamDirectory"] --> BOX["AcknowledgedMailbox"]
   TEAM --> SHUT["ShutdownCoordinator"]
   CRON["DurableScheduler"] --> WI
+  TRANSCRIPT["TranscriptStore + RecoveryReducer"] --> RESUME["ResumeCoordinator"]
+  RESUME -. "new runtime attempt" .-> AR
+  POLICY["PolicyEngine + SecurityExecutor"] --> SANDBOX["SandboxPort"]
+  TELEMETRY["Telemetry + Usage / Evaluation"] --> GOV["TenantGovernor"]
+  RELEASE["ReleaseController"] --> WORKERS["ready / canary / drain / rollback"]
 ```
 
 核心能力：
@@ -68,8 +73,13 @@ flowchart LR
 - H5 的 `WorkItemStore` 与 `RuntimeExecutionRegistry` 分开责任和活执行，加入 lease/heartbeat/reclaim/fencing、linked/detached cancellation；
 - H5 的 `TeamDirectory`、`AcknowledgedMailbox` 和 `ShutdownCoordinator` 加入稳定身份、message ID、per-recipient sequence、redelivery-until-ack 与 correlated shutdown；
 - H6 foundation 的 `DurableScheduler` 先持久化语义上的 stable pending trigger，再 commit one-shot removal 或 recurring advance；它不宣称外部副作用 exactly-once。
+- H6 的 `TranscriptStore`、`RecoveryReducer` 和 `ResumeCoordinator` 从 append-only evidence 保守重建 message/effect/background 状态，区分 normal resume、fork、orphan 与 indeterminate effect；
+- H7-1 的 revisioned `PolicyEngine`、`SecurityExecutor`、secret reference 和 `SandboxPort` 在 Permission 之后建立 fail-closed worker/capability envelope；当前 fake port 不是 OS Sandbox；
+- H7-2 的 closed metadata telemetry、observer-only exporter、cumulative-to-delta usage、versioned cost/evaluation 和 `TenantGovernor` 建立可观测与配额控制面；
+- H7-3 的 `ReleaseController` 用 manifest compatibility、dependency readiness、stable canary、SLO guard、drain 与 effect-aware rollback 管理新旧版本并存；
+- Dockerfile、Compose 配置和 release demo 提供可复现参考拓扑，但不冒充生产高可用平台。
 
-详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，累计行为不变量见 [H3](contracts/h3-contract.md)、[H4](contracts/h4-contract.md) 与 [H5](contracts/h5-contract.md) 契约。
+详细组件和所有权见 [architecture/core-runtime.md](architecture/core-runtime.md)，累计行为不变量见 [H5](contracts/h5-contract.md)、[H6](contracts/h6-contract.md) 与最终 [H7](contracts/h7-contract.md) 契约。
 
 ## 快速运行
 
@@ -88,6 +98,7 @@ flowchart LR
 cd "D:\agent\Claude code最新\mini-agent-harness"
 npm ci
 npm run demo
+npm run demo:release
 npm test
 npm run typecheck
 ```
@@ -138,7 +149,7 @@ npm run agent -- --prompt "检查 README" --output stream-json --trace
 npm run agent -- --grant-executable rg --grant-executable node
 ```
 
-这里故意使用 `grant`，不是 `allow-command`：授权粒度是 executable，不是某一组安全 argv。授予 `node`、`python`、`git` 等价于允许模型给该程序传任意参数，属于高风险能力。实现使用 `shell:false`，不接受整段 shell 字符串，并限制 cwd、时间、输出和子进程环境；取消只保证请求终止直接子进程，不承诺所有后代进程都已退出。这仍不是 Sandbox。真正的 argv profile、进程树治理、文件系统/系统调用隔离、容器和远程 worker 属于后续里程碑。
+这里故意使用 `grant`，不是 `allow-command`：授权粒度是 executable，不是某一组安全 argv。授予 `node`、`python`、`git` 等价于允许模型给该程序传任意参数，属于高风险能力。实现使用 `shell:false`，不接受整段 shell 字符串，并限制 cwd、时间、输出和子进程环境；取消只保证请求终止直接子进程，不承诺所有后代进程都已退出。这仍不是 Sandbox。H7-1 已实现可注入的 fail-closed `SandboxPort` 契约，但真实 argv profile、进程树治理、文件系统/系统调用隔离、容器和远程 worker 仍需生产 adapter。
 
 ## 测试层次
 
@@ -154,15 +165,19 @@ npm run agent -- --grant-executable rg --grant-executable node
 | Extension registry | source identity、trust、conflict atomicity、snapshot、unload、execution lease |
 | MCP session | handshake/list、generation/revision、refresh/degrade、disconnect、abort、indeterminate retry |
 | Work coordination | blocker/claim、lease/heartbeat/reclaim/fencing、linked/detached execution、Team/Mailbox/shutdown/scheduler |
+| Transcript recovery | JSONL tail/middle corruption、parent DAG、unresolved Tool、effect/background recovery、normal resume/fork、scheduler takeover |
+| Security boundary | stale policy、worker identity、filesystem/network/process constraint、secret resolution、provenance、required Sandbox fail-closed |
+| Observability/governance | closed metadata、observer failure isolation、usage delta、price/evaluation version、reservation、quota 与 bounded FIFO queue |
+| Release control | manifest compatibility、readiness、stable routing、SLO advancement、drain、rollback 与 effect boundary |
 | Provider protocol | Chat Completions 请求投影、tool call JSON、usage、脱敏 HTTP 错误、URL 约束 |
 | Built-in tools | workspace 越界、`rg` 搜索、默认拒绝命令、secret 不进入子进程 |
 | Tool scheduler | safe batch、exclusive barrier、并发上限、顺序提交、progress 与 exactly-once outcome |
 | Python mirror | 与 TypeScript 一致的 loop、pairing、permission、cancel、stream 和 scheduler 行为 |
-| 累计回归 | H5 -> H4 -> H3 -> H2 -> H1 -> H0 与所有历史行为契约 |
+| 累计回归 | H7 -> H6 -> H5 -> H4 -> H3 -> H2 -> H1 -> H0 与所有历史行为契约 |
 
 真实 API 冒烟与确定性测试分开。模型可达不证明 Tool Loop 正确，fake provider 测试通过也不伪装成真实网络验证。
 
-当前验证基线（2026-07-31）：`npm test` 共 `105/105`，其中 ExtensionDecision `7/7`、ExtensionRegistry `8/8`、McpSession `9/9`、WorkCoordinator `12/12`；本地锁定编译器 strict typecheck 通过。统一 Python integrated 回归 `79/79`，ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成回归 `4/4` 全部通过。
+当前验证基线（2026-07-31）：`npm test` 共 `144/144`；本地锁定编译器 strict typecheck 通过。统一 Python integrated 回归 `116/116`，ConversationStore `13/13`；H2 `4/4`、H1 `12/12`、S0 `15/15` 与集成回归 `4/4` 全部通过。Agent demo、release-control demo 与 Docker Compose 静态配置通过；Docker Desktop Linux daemon 不可用，因此未执行镜像 build/run 冒烟。
 
 ## 为什么适合简历和面试讲解
 
@@ -180,11 +195,15 @@ npm run agent -- --grant-executable rg --grant-executable node
 10. 为什么 Plugin namespace、source identity、registry revision 与 MCP generation 是不同身份和版本边界；
 11. 为什么 WorkItem owner 不是 Runtime execution，lease 过期后还需要 fencing token；
 12. 为什么 message `read` 不是业务 ack，stable trigger 也不等于 exactly-once。
+13. 为什么 Transcript 缺失 tool result 不能证明副作用没发生，fork 又为何必须重写身份并放弃 unresolved ownership；
+14. 为什么 Permission allow 后仍需 policy revision、worker identity、secret boundary 和真实 Sandbox adapter；
+15. 为什么 cumulative usage 要按 attempt 转 delta，observer 又不能取得执行控制权；
+16. 为什么回滚只改变路由和 admission，不能撤销已经完成的 Tool effect。
 
 一条准确的简历描述可以是：
 
-> 设计并实现 TypeScript/Python Agent Harness：以 revisioned conversation 为状态核心，完成 OpenAI-compatible 模型适配、并发 Tool Loop、Context/Compact/Memory、Hook/Permission 决策、扩展与 MCP capability lifecycle，并实现带 lease/fencing、ack 和稳定 trigger 的多 Agent 协调控制面；用 105 个 TypeScript 与 79 个 Python 协议测试守住取消、顺序提交和恢复边界。
+> 设计并实现 TypeScript/Python Agent Harness：以 revisioned conversation 为状态核心，完成模型适配、并发 Tool Loop、Context/Memory、扩展与 MCP、多 Agent 协调，并加入 Transcript 恢复、fail-closed 安全 envelope、metadata-only 成本/配额治理和可回滚发布控制面；用 144 个 TypeScript 与 116 个 Python 协议测试守住取消、顺序提交、恢复和灰度边界。
 
 ## 当前边界
 
-本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 增量消费、streaming tool execution、透明 model fallback、crash-durable Compact/Transcript、外置结果恢复、完整 CLAUDE.md discovery、真实 Skill/Plugin filesystem discovery 或 marketplace、官方 MCP transport/OAuth/Resource/Prompt adapter、process-backed Subagent/Team、durable queue/mailbox、数据库持久化 Memory、embedding recall、PII/DLP enforcement、Sandbox、分布式执行和完整 OTel/cost ledger。Instruction、Memory、ExtensionRegistry、McpSession 与 WorkCoordinator 是可组合、已测试的独立 owner；除 H4-1 Tool decision pipeline 外，它们尚未自动接入每次 `AgentRuntime.submit()`。H5/H6 foundation 是 persistence-neutral reference implementation，不冒充生产 durability 或 Claude Code 私有实现。
+本版本有意不宣称已实现 Provider-specific SSE 解析、把 stream 接入 AgentRuntime 的完整 assistant/tool 增量消费、streaming tool execution、透明 model fallback、物理 durable Compact/Transcript、自动 effect reconciliation、完整 CLAUDE.md discovery、真实 Skill/Plugin filesystem discovery 或 marketplace、官方 MCP transport/OAuth/Resource/Prompt adapter、process-backed Subagent/Team、durable queue/mailbox、数据库持久化 Memory、embedding recall、真实 OS Sandbox、Vault/PKI、分布式 quota/rollout 或生产 OTel 平台。Instruction、Memory、ExtensionRegistry、McpSession、WorkCoordinator、Recovery/Security/Governance/ReleaseController 都是可组合、已测试的独立 owner；除 H4-1 Tool decision pipeline 外，它们没有被隐藏接入每次 `AgentRuntime.submit()`。H6/H7 是 persistence-neutral reference implementation，不冒充生产 durability、基础设施控制面或 Claude Code 私有实现。

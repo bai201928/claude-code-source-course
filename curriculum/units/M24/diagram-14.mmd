@@ -1,0 +1,6 @@
+flowchart LR
+  META["Transcript worktree state"] --> FRESH{"本次 CLI 已创建 fresh worktree?"}
+  FRESH -->|"是"| KEEP["fresh state 优先"]
+  FRESH -->|"否"| CD["process.chdir(saved path)"]
+  CD -->|"成功"| RESTORE["更新 cwd/worktree owner"]
+  CD -->|"失败"| EXITED["记录 null 并留在可用 cwd"]

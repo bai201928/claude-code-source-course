@@ -1,0 +1,6 @@
+flowchart LR
+  WIN["Native Windows PowerShell"] --> REQ{"policy requires Sandbox?"}
+  REQ -->|"否"| UNS["按其他 Permission 运行；无该 Sandbox 层"]
+  REQ -->|"是"| ALLOW{"allowUnsandboxedCommands?"}
+  ALLOW -->|"否"| REFUSE["拒绝执行"]
+  ALLOW -->|"是"| WARN["显式降级为 unsandboxed"]

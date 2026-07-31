@@ -1,0 +1,12 @@
+stateDiagram-v2
+  [*] --> ReadLeaf
+  ReadLeaf --> AddCurrent: 未访问
+  AddCurrent --> RootDone: parentUuid = null
+  AddCurrent --> ReadParent: parent 存在
+  AddCurrent --> Dangling: parent 不存在
+  ReadParent --> Cycle: parent 已在 seen
+  ReadParent --> AddCurrent: 新 parent
+  RootDone --> ParallelPass
+  Dangling --> ParallelPass: 返回 partial
+  Cycle --> ParallelPass: 返回 partial
+  ParallelPass --> [*]

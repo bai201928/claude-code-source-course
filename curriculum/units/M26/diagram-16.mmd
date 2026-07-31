@@ -1,0 +1,6 @@
+flowchart TD
+  E["incoming eventId"] --> SEEN{"seen before?"}
+  SEEN -->|"no"| APP["append immutable entry"]
+  SEEN -->|"yes"| SAME{"canonical content equal?"}
+  SAME -->|"yes"| IDEM["return existing entry"]
+  SAME -->|"no"| COL["fail collision"]

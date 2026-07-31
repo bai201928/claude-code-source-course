@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant S as Sidechain JSONL
+  participant R as resumeAgentBackground
+  participant T as Runtime Task Registry
+  participant A as New Agent Attempt
+  S->>R: messages + replacement + metadata
+  R->>R: 清理协议并检查 worktree
+  R->>T: registerAsyncAgent(new controller)
+  T->>A: start new runAgent lifecycle
+  Note over S,A: 旧 controller/process 不会复活

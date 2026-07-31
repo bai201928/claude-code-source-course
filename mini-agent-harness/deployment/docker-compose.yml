@@ -1,0 +1,36 @@
+services:
+  release-control-smoke:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    command: ["typescript/agent/releaseDemo.ts"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  agent-cli:
+    profiles: ["live"]
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    command: ["typescript/agent/cli.ts", "--headless"]
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    environment:
+      MINI_AGENT_API_KEY: ${MINI_AGENT_API_KEY:-}
+      MINI_AGENT_BASE_URL: ${MINI_AGENT_BASE_URL:-https://api.deepseek.com/v1}
+      MINI_AGENT_MODEL: ${MINI_AGENT_MODEL:-deepseek-chat}
+    volumes:
+      - harness-workspace:/workspace
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  harness-workspace:

@@ -1,0 +1,16 @@
+sequenceDiagram
+  participant T as BashTool / PowerShellTool
+  participant S as shouldUseSandbox
+  participant M as SandboxManager
+  participant H as Shell
+  participant OS as child process
+  T->>S: command + dangerouslyDisableSandbox
+  S-->>T: true / false
+  T->>H: executable request + shouldUseSandbox
+  alt shouldUseSandbox = true
+    H->>M: wrapWithSandbox(command, shell, signal)
+    M-->>H: wrapped command
+  end
+  H->>OS: spawn(binary, argv, env)
+  OS-->>H: exit / error / cancelled
+  H->>M: cleanup when sandboxed

@@ -1,0 +1,6 @@
+flowchart LR
+  ARR["arrival rate λ"] --> IN["in-flight = λ × wall time"]
+  WALL["queue + model + tool + approval"] --> IN
+  IN --> W["workers = in-flight / effective concurrency"]
+  UTIL["target utilization"] --> W
+  W --> HEAD["AZ failure + canary + burst headroom"]

@@ -1,0 +1,13 @@
+flowchart TD
+  EDGE["API / CLI edge"] --> ADM["admission + tenant reservation"]
+  ADM --> QUEUE["durable work queue"]
+  QUEUE --> WORKER["isolated Agent worker"]
+  WORKER --> PROVIDER["model Provider"]
+  WORKER --> TOOL["tool / RAG / MCP"]
+  WORKER --> META["metadata event bus"]
+  WORKER --> EVID["controlled artifact store"]
+  META --> TRACE["trace / metric / log backends"]
+  META --> COST["usage + cost ledger"]
+  EVID --> EVAL["versioned evaluation"]
+  COST --> POLICY["budget / rollout decision"]
+  EVAL --> POLICY

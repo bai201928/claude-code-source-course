@@ -1,0 +1,10 @@
+flowchart LR
+  IN["work request"] --> G["TenantGovernor reserve"]
+  G -->|"admitted"| R["AgentRuntime / Tool Loop"]
+  R --> S["H7-1 SecurityExecutor"]
+  R --> T["TelemetryRecorder"]
+  R --> U["UsageCostLedger"]
+  R --> E["EvaluationLedger"]
+  R -->|"complete/cancel"| G
+  T --> O["OpenTelemetryPort"]
+  S --> W["SandboxPort"]

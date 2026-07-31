@@ -1,0 +1,9 @@
+flowchart TD
+  IR["interaction span\n用户轮次 root"] --> L1["llm_request attempt"]
+  IR --> TB["tool.blocked_on_user"]
+  IR --> TE["tool.execution"]
+  IR --> HK["hook"]
+  ALS["AsyncLocalStorage"] -.传播 interaction/tool context.-> L1
+  ALS -.-> TB
+  MAP["activeSpans WeakRef\nstrongSpans for non-ALS"] -.按 spanId 保活/查找.-> L1
+  TTL["30 min TTL"] -.只清 orphan.-> MAP

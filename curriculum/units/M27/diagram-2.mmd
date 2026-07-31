@@ -1,0 +1,9 @@
+flowchart TD
+  CLI["claude update"] --> DOC["doctor diagnostic"]
+  DOC --> KIND{"installation type"}
+  KIND --> NAT["native installer + local lock"]
+  KIND --> PM["package-manager guidance"]
+  KIND --> NPM["npm local/global update"]
+  NAT --> EXIT["graceful shutdown current process"]
+  PM --> EXIT
+  NPM --> EXIT

@@ -1,6 +1,6 @@
 # 全局术语表
 
-状态：`S4 已发布`
+状态：`S5 已发布，课程完成`
 
 本表只保存后续单元需要复用的稳定术语。具体教学解释仍以来源单元为准。
 
@@ -80,3 +80,14 @@
 | fencing token | 旧 worker 在 lease 被重领后不能提交的代际凭证 | 只设置 TTL、取消通知 | M23/H5 |
 | acknowledged mailbox | H5 中 message ID 去重、未 ack 重投和 recipient sequence 的 at-least-once mailbox | Claude Code file inbox `read`、业务 effect 已提交 | M23/H5 |
 | pending trigger | H6 foundation 在副作用前生成、恢复时保持 stable ID 的待提交调度记录 | PID lock、`inFlight`、外部 exactly-once | M23/H5-H6 |
+| Transcript evidence | append-only record 表达已经观察到的消息、effect 或 background 事实 | live runtime、远端 effect truth、完整 durable storage | M24/H6 |
+| conservative recovery | 从不完整证据产生带缺口和 indeterminate 状态的安全视图 | 自动补造成功/失败、自动 replay | M24/H6 |
+| Normal Resume | 保留原 session identity、用新 runtime attempt 接管可恢复状态 | 复活旧 AbortController/process、Fork | M24/H6 |
+| Fork Resume | mint 新 session/message/record identity 并保留 source mapping | 复制 unresolved effect/background ownership | M24/H6 |
+| security envelope | Permission 后把当前 policy revision、worker identity、capability constraints 与 secret references 固定到一次执行 | OS Sandbox 本身、模型 request | M25/H7-1 |
+| SandboxPort | H7-1 注入的真实隔离执行 adapter 接口；缺失且 policy 要求时 fail closed | deterministic fake 已经提供 OS isolation | M25/H7-1 |
+| closed metadata telemetry | 只允许 correlation identity、计数、时间和类别的封闭事件协议 | 截断 prompt、hash 后正文、业务状态 owner | M26/H7-2 |
+| attempt usage delta | 同一 attempt 的相邻 cumulative snapshot 之差 | 把每个 cumulative 值直接累加 | M26/H7-2 |
+| tenant reservation | 工作开始前占用 token/cost/concurrency 预算的 admission 记录 | Provider quota header、organization policy、task budget | M26/H7-2 |
+| release manifest | binary、protocol、read/write schema、policy 和 feature revision 的 immutable compatibility identity | 健康检查、容器 tag 字符串 | M27/H7-3 |
+| effect-aware rollback | 回退 routing/admission 并显式保留已发生或不确定副作用 | 自动撤销 Tool effect、删除 Transcript、exactly-once | M27/H7-3 |

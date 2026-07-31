@@ -1,0 +1,6 @@
+flowchart TD
+  CALL["Bash: npm run build"] --> PERM{"Permission decision"}
+  PERM -->|"deny"| D1["拒绝 capability"]
+  PERM -->|"allow"| SBOX{"Sandbox restriction"}
+  SBOX -->|"允许 workspace 写入"| OK["执行受限副作用"]
+  SBOX -->|"读取 ~/.ssh 或访问未知域名"| D2["OS/runtime 拒绝资源"]

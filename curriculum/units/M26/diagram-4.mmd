@@ -1,0 +1,6 @@
+stateDiagram-v2
+  [*] --> Active: start span
+  Active --> Ended: explicit end
+  Active --> Orphaned: control flow lost
+  Orphaned --> Ended: TTL safety cleanup
+  Ended --> [*]: remove references/export

@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant E as Edge/Admission
+  participant R as ReleaseController
+  participant Q as WorkQueue
+  participant W as Worker/Harness
+  participant S as Transcript/Effect Store
+  participant O as Telemetry/Cost/Eval
+  E->>R: stable bucket + release selection
+  E->>Q: work(run, release, policy, schema)
+  Q->>W: lease to compatible ready worker
+  W->>S: append intent / state transition
+  W->>W: model + Tool Loop + H7-1 checks
+  W->>S: commit result or indeterminate marker
+  W->>O: metadata attempt/usage/evaluation
+  O-->>R: candidate SLI window
+  R-->>E: hold / advance / rollback route
+  R-->>W: continue / drain

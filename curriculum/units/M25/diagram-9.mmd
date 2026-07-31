@@ -1,0 +1,15 @@
+sequenceDiagram
+  participant M as model/tool input
+  participant P as filesystem permission
+  participant FS as filesystem
+  participant E as FileWrite/FileEdit
+  M->>P: original path
+  P->>FS: inspect symlink chain / ancestor
+  FS-->>P: resolved path + metadata
+  P-->>E: allow / ask / deny
+  E->>FS: compare last read and current metadata/content
+  alt unchanged
+    E->>FS: perform write
+  else changed / suspicious
+    E-->>M: reject and require reread
+  end

@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant D as Deserialize
+  participant M as mutableMessages
+  participant Q as Input Queue
+  participant L as Query Loop
+  D->>M: interrupted user + sentinel
+  M->>M: removeInterruptedMessage splice 两项
+  M->>Q: enqueue prompt once in this process
+  Q->>L: 正常 drain
+  Note over Q,L: 再次崩溃时没有 durable ack 证明已经处理

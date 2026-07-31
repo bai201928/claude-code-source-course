@@ -1,0 +1,8 @@
+flowchart TD
+  FAIL["canary fails"] --> ROUTE["route back to previous"]
+  ROUTE --> DRAIN["candidate workers drain"]
+  DRAIN --> OWN{"active work/effect state known?"}
+  OWN -->|"completed"| KEEP["preserve committed result"]
+  OWN -->|"not started"| REQUEUE["safe requeue"]
+  OWN -->|"indeterminate"| REC["M24 recovery + idempotency/effect inquiry"]
+  REC --> COMP["explicit compensate / manual review"]

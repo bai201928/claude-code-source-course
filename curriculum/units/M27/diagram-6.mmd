@@ -1,0 +1,5 @@
+flowchart LR
+  E["Expand"] --> M["Migrate"] --> C["Contract"]
+  E --> E1["old writes v1\nnew reads v1+v2"]
+  M --> M1["backfill / dual read\nthen new writes v2"]
+  C --> C1["rollback window closed\nremove v1 reader/writer"]

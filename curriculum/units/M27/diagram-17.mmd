@@ -1,0 +1,6 @@
+flowchart LR
+  COMP["compatibility tests"] --> READY["registration/readiness"]
+  READY --> CAN["routing/SLO tests"]
+  CAN --> DRAIN["drain/work ownership"]
+  DRAIN --> RB["rollback boundary"]
+  RB --> FULL["H0-H7 cumulative regression"]

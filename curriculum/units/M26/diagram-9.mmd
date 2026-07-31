@@ -1,0 +1,9 @@
+flowchart TD
+  A["attempt starts"] --> S["cumulative usage evolves"]
+  S --> FIN{"terminal usage available?"}
+  FIN -->|"stream message_delta"| C1["cost final snapshot once"]
+  FIN -->|"nonstream fallback finally"| C2["cost fallback once"]
+  FIN -->|"advisor sub-usage"| C3["separate identity and cost"]
+  C1 --> LED["session / enterprise ledger"]
+  C2 --> LED
+  C3 --> LED

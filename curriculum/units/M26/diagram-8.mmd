@@ -1,0 +1,7 @@
+flowchart LR
+  S1["snapshot 100"] --> D1["delta 100 - 0 = 100"]
+  S2["snapshot 130"] --> D2["delta 130 - 100 = 30"]
+  D1 --> SUM["ledger total 130"]
+  D2 --> SUM
+  S1 -.错误直接相加.-> BAD["230"]
+  S2 -.-> BAD

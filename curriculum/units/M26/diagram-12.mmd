@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant R1 as request r1
+  participant R2 as request r2
+  participant G as TenantGovernor
+  R1->>G: reserve 70 tokens / $0.70
+  G-->>R1: admitted, concurrency=1
+  R2->>G: reserve 40 tokens / $0.40
+  Note over G: 70+40 > 100, or concurrency full
+  G-->>R2: queued (bounded)
+  R1->>G: cancel or complete
+  G->>G: release concurrency / commit actual usage
+  G-->>R2: FIFO promote when capacity fits

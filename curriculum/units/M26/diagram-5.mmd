@@ -1,0 +1,9 @@
+flowchart TD
+  DATA["prompt / model output / tool payload"] --> AN{"Analytics logEvent"}
+  AN -->|"普通类型路径"| META["boolean / number metadata"]
+  AN -->|"显式人工审查 cast"| STR["string 可能进入"]
+  DATA --> STD{"standard tracing gates"}
+  STD -->|"default"| RED["<REDACTED> / metadata"]
+  STD -->|"content env enabled"| BODY1["原始内容"]
+  DATA --> BETA{"beta detailed tracing enabled"}
+  BETA --> BODY2["hash / dedupe / truncated content"]

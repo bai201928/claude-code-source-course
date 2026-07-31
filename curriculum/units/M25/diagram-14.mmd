@@ -1,0 +1,11 @@
+flowchart TD
+  MCP["MCP server config"] --> DENY{"matches deny?"}
+  DENY -->|"是"| NO["blocked"]
+  DENY -->|"否"| MAN{"managed-only?"}
+  MAN -->|"是"| MP{"managed allow?"}
+  MAN -->|"否"| AL{"configured allowlist?"}
+  MP -->|"否"| NO
+  MP -->|"是"| CONNECT["eligible to connect"]
+  AL -->|"empty / no match"| NO
+  AL -->|"match"| CONNECT
+  CONNECT --> SB["仍需 transport/process isolation"]

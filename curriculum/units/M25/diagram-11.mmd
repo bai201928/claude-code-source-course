@@ -1,0 +1,11 @@
+stateDiagram-v2
+  [*] --> LoadCache
+  LoadCache --> ActiveStale: cache exists
+  LoadCache --> NoRemotePolicy: no cache
+  ActiveStale --> Fetch
+  NoRemotePolicy --> Fetch
+  Fetch --> ActiveFresh: success + accepted
+  Fetch --> ActiveStale: failed + cache exists
+  Fetch --> FailOpen: failed + no cache
+  ActiveFresh --> Polling: about hourly
+  Polling --> Fetch

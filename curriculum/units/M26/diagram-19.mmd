@@ -1,0 +1,18 @@
+flowchart TD
+  Q["一次 Agent work"] --> G{"tenant reservation fits?"}
+  G -->|"no"| WAIT["bounded queue / reject"]
+  G -->|"yes"| I["interaction identity"]
+  I --> A["attempt identity\nprimary/retry/fallback"]
+  A --> T["TTFT + duration states"]
+  A --> U["cumulative usage snapshots"]
+  U --> D["attempt-local delta"]
+  D --> C{"price known?"}
+  C -->|"yes"| KC["versioned known cost"]
+  C -->|"no"| UC["unknown cost, not zero"]
+  I --> M["closed metadata telemetry"]
+  M --> O{"export succeeds?"}
+  O -->|"no"| OF["observer failure SLI"]
+  I --> E["versioned evaluation"]
+  KC --> DONE["complete actual / release concurrency"]
+  UC --> DONE
+  E --> NEXT["explicit policy / rollout input"]

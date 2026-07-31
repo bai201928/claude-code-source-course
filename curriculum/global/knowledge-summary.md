@@ -1,6 +1,6 @@
-# S0-S4 已确认知识摘要
+# S0-S5 已确认知识摘要
 
-状态：`S4 已发布`
+状态：`S5 已发布，课程完成`
 
 S0 的目标不是让学习者记住四组 API，而是建立阅读后续 Claude Code 主线的基础动作：
 
@@ -83,7 +83,7 @@ H2 仍不承诺 Provider-specific SSE parser 或 Runtime streaming tool executio
 
 H3 / Harness `0.4.0` 在 H2 上累计 aggregate `ResultBudgetLedger`、revision-gated `CompactCoordinator`、scoped/trusted `InstructionCatalog` / `InstructionPipeline` 和 candidate-gated `MemoryStore` / `MemoryProjector`。Conversation、replacement、Compact、Instruction 与 Memory拥有独立 revision；request view与普通 Trace不回写正文。
 
-H3 仍不承诺 crash-durable Transcript/Resume、完整 CLAUDE.md discovery、自动 Runtime instruction/memory wiring、persistent/vector memory、PII/DLP enforcement、Hook/Skill/MCP/Plugin、多 Agent、Sandbox或分布式执行。
+H3 发布时仍不承诺 crash-durable Transcript/Resume、完整 CLAUDE.md discovery、自动 Runtime instruction/memory wiring、persistent/vector memory、PII/DLP enforcement、Hook/Skill/MCP/Plugin、多 Agent、Sandbox或分布式执行。
 
 ## S4 已确认结论
 
@@ -103,7 +103,27 @@ H3 仍不承诺 crash-durable Transcript/Resume、完整 CLAUDE.md discovery、�
 
 H4 把 ordered `ExtensionDecisionPipeline` 接入 ToolRegistry/Scheduler/Runtime，并加入独立的 revisioned `ExtensionRegistry` 与 transport-neutral `McpSession`。H5 再加入分立的 `WorkItemStore`、`RuntimeExecutionRegistry`、`TeamDirectory`、`AcknowledgedMailbox` 和 `ShutdownCoordinator`；`DurableScheduler` 作为 H6 foundation 先表达 stable pending trigger、commit 和 state recovery。Harness `0.5.0` 的 TypeScript/Python 行为镜像均通过累计回归。
 
-H4/H5 不等于 Claude Code 私有实现。当前仍未完成真实 Skill/Plugin discovery/marketplace、官方 MCP transport/OAuth、process-backed Subagent/Team、durable Transcript/Resume、数据库 CAS/queue/outbox、Sandbox、分布式 scheduler 与完整 OTel/cost ledger。
+H4/H5 不等于 Claude Code 私有实现。S4 发布时仍未完成真实 Skill/Plugin discovery/marketplace、官方 MCP transport/OAuth、process-backed Subagent/Team、durable Transcript/Resume、数据库 CAS/queue/outbox、Sandbox、分布式 scheduler 与完整 OTel/cost ledger；其中课程选择的恢复、安全与治理契约随后由 S5/H6-H7 以 clean-room reference 形式补齐。
+
+## S5 已确认结论
+
+- Transcript enqueue、write、flush 和 cleanup drain 是不同完成点；`await` 一个队列 API 不自动证明物理 durable append。
+- JSONL 恢复可保留有效记录、报告坏中段并区分 partial tail；parent DAG 的 cycle/dangling/parallel sibling 必须产生显式完整度，而不是静默线性化。
+- missing tool result 不能证明外部 effect 没发生。`prepared`、`attempted/indeterminate` 与 `committed` 需要不同恢复策略，自动 retry 只适用于有额外幂等或对账证明的操作。
+- Normal Resume 保留 session identity 但创建新 runtime attempt；Fork 必须 mint 新 identity，不能复制 unresolved effect/background ownership。
+- Permission、Sandbox、managed policy、filesystem/network/process restriction、worker identity 和 extension provenance 是纵深防御的不同层。Sandbox required 但 adapter unavailable 时必须 fail closed。
+- secret reference 可以进入控制面，secret value 只应在 trusted execution boundary 解析；model、subprocess 与 host storage 是三种不同暴露面。
+- telemetry 必须以 exact run/attempt/tool identity 关联。observer 失败不能改变 run outcome；截断或 hash 正文也不等于 metadata-only。
+- streaming usage 常是 attempt 内 cumulative snapshot，账本需要先求 delta。missing TTFT/price 是 unknown，不是 0；retry/fallback 必须保持独立 attempt identity。
+- Provider quota、organization policy、request task budget 与本地 tenant reservation 的来源、owner 和强制点不同。
+- production release 需要同时验证 binary、protocol、read/write schema、policy、feature、work ownership 与 effect identity。进程 healthy 不等于依赖 ready 或 rollback-compatible。
+- canary 只在稳定分桶和足够 SLI 样本后推进；drain 只停止接新工作。rollback 改变 routing/admission，不能撤销 Tool effect 或删除 Transcript evidence。
+
+## H6/H7 能力
+
+H6/H7 / Harness `0.7.0` 在 H0-H5 上累计 append-only `TranscriptStore`、conservative `RecoveryReducer`、Normal/Fork `ResumeCoordinator`、revisioned `PolicyEngine`、fail-closed `SecurityExecutor`/`SandboxPort`、closed metadata telemetry、usage/cost/evaluation ledgers、`TenantGovernor` 与 `ReleaseController`。TypeScript `144/144`、Python integrated `116/116`、strict typecheck 与全部历史回归通过。
+
+这些能力是 clean-room、in-process、persistence-neutral 的参考控制面。物理 durable storage、自动 effect reconciliation、真实 OS Sandbox、Vault/PKI、生产 OTel、分布式 quota/queue、Kubernetes/数据库迁移和灾备仍由生产 adapter/platform 负责。
 
 ## 证据边界
 

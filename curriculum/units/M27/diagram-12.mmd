@@ -1,0 +1,9 @@
+flowchart LR
+  DEP["deploy artifact"] --> WORK["worker pool"]
+  FLAG["versioned feature snapshot"] --> BEH["request behavior"]
+  POL["versioned policy snapshot"] --> AUTH["effect authorization"]
+  SCHEMA["schema phase"] --> STORE["read/write compatibility"]
+  ROUTE["release controller"] --> WORK
+  WORK --> BEH
+  BEH --> AUTH
+  AUTH --> STORE

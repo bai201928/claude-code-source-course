@@ -1,0 +1,7 @@
+flowchart TD
+  U["usage delta + model + speed"] --> P{"price catalog lookup"}
+  P -->|"known"| K["known USD + priceVersion"]
+  P -->|"unknown"| X["cost status unknown"]
+  X --> ALERT["pricing coverage alert / later reconciliation"]
+  K --> REPORT["cost report"]
+  X --> REPORT

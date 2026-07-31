@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant M as Main request
+  participant W as Warmup request
+  participant S as activeSpans
+  M->>S: start span M
+  W->>S: start span W (latest)
+  M-->>S: response M, end without exact span
+  S-->>W: legacy findLast picks W
+  Note over M,W: M 的 usage/status 可能写到 W
+  W-->>S: response W

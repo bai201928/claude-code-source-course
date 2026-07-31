@@ -1,0 +1,11 @@
+stateDiagram-v2
+  [*] --> Registering
+  Registering --> Unhealthy: dependency not ready
+  Registering --> Rejected: protocol/schema/policy mismatch
+  Registering --> Ready: identity + dependencies pass
+  Ready --> Draining: stop new work
+  Draining --> Drained: active work = 0
+  Ready --> Unhealthy: required dependency lost
+  Unhealthy --> [*]
+  Rejected --> [*]
+  Drained --> [*]

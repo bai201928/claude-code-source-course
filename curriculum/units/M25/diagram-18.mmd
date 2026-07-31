@@ -1,0 +1,16 @@
+flowchart TD
+  Q["一次外部副作用"] --> A{"业务授权?"}
+  A -->|"否"| STOP["deny"]
+  A -->|"是"| I{"worker identity + policy revision?"}
+  I -->|"不匹配"| STOP
+  I -->|"匹配"| C{"fs/network/process capability?"}
+  C -->|"越界"| STOP
+  C -->|"通过"| E{"extension provenance trusted?"}
+  E -->|"未知"| STOP
+  E -->|"通过/内建"| S["resolve secret refs at trusted boundary"]
+  S --> R{"policy revision still current?"}
+  R -->|"否"| STOP
+  R -->|"是"| W{"required Sandbox available?"}
+  W -->|"否"| STOP
+  W -->|"是"| FX["execute effect"]
+  FX --> META["metadata-only report"]

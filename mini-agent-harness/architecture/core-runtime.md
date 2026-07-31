@@ -37,6 +37,7 @@ The loop has one durable message owner. Each `ConversationStore` binds exactly o
 | Released S2 / M10-M15 | durable message ownership, request projection, provider boundary, run-channel separation, bounded stream lifecycle and ordered concurrent Tool Loop | H2 / Harness 0.3.0 single-agent vertical slice |
 | Released S3 / M16-M19 | aggregate budget, revision-checked Compact, scoped/trusted instruction snapshots and governed memory recall | H3 / Harness 0.4.0 Context and Memory milestone |
 | Released S4 / M20-M23 | Hook/Permission decision governance, extension registry, MCP session lifecycle and long-lived work coordination | H5 / Harness 0.5.0 extension and coordination milestone |
+| Released S5 / M24-M27 | conservative Transcript recovery, fail-closed security envelope, metadata governance and release compatibility | H7 / Harness 0.7.0 production-governance milestone |
 
 M14 contributes a provider-neutral bounded stream contract and standalone assembly experiments. M15 contributes the explicit execution plan, bounded safe batches, exclusive barriers, ordered publication and exactly-once outcomes. Provider-specific SSE assembly and Runtime streaming consumption remain deferred.
 
@@ -67,6 +68,15 @@ M14 contributes a provider-neutral bounded stream contract and standalone assemb
 | Delivery and acknowledgment state | `AcknowledgedMailbox` | sender, recipient | message ID, sequence, redelivery and explicit ack |
 | Correlated shutdown request | `ShutdownCoordinator` | team supervisor | request/approve/reject/complete transition |
 | Schedule and pending trigger | `DurableScheduler` | scheduler adapter, recovery | stable trigger creation and explicit commit |
+| Transcript records and revision | `TranscriptStore` | recovery reducer, resume coordinator | append-only record publication |
+| Recovered message/effect/background view | `RecoveryReducer` | resume coordinator, supervisor | pure projection from immutable evidence |
+| Normal/fork resume mapping | `ResumeCoordinator` | composition root | one orchestration with fresh runtime ownership |
+| Security policy revision | `PolicyEngine` | security executor | immutable policy publication |
+| Checked external-effect envelope | `SecurityExecutor` / `SandboxPort` | worker adapter | current revision, identity and capability validation |
+| Telemetry delivery status | `TelemetryRecorder` | observer/exporter | closed metadata events only |
+| Usage, cost and evaluation records | `UsageCostLedger` / `EvaluationLedger` | governance/reporting | idempotent versioned event publication |
+| Tenant reservation and queue | `TenantGovernor` | admission adapter | reserve, FIFO promote, commit or cancel |
+| Release, canary and drain state | `ReleaseController` | router, worker supervisor | revisioned compatibility and SLO transitions |
 | Current model iteration | `AgentRuntime` | trace/event observers | single-flight run |
 | Model-visible tools | `CapabilitySnapshot` | request projector, registry | new iteration boundary |
 | Tool handlers | `AgentToolRegistry` | runtime | bootstrap registration |
@@ -113,7 +123,21 @@ H5 separates long-lived responsibility from live execution. `WorkItemStore` owns
 
 `TeamDirectory`, `AcknowledgedMailbox` and `ShutdownCoordinator` form a small coordination plane. Team identity is not an array of Promises. Mail is at-least-once until explicit ack, keyed by message ID and ordered per recipient, but ack remains separate from the recipient's business effect. Shutdown has a correlated request/approval/rejection/completed lifecycle rather than a direct leader mutation.
 
-`DurableScheduler` is an H6 foundation inside the H5 release. Polling materializes a stable pending trigger before external handling; commit removes a one-shot or advances recurrence. Exported state can recover and redeliver the same trigger ID. This improves deduplication but does not make an external side effect exactly-once. The current implementation is persistence-neutral and in-process; database/queue adapters, leader election, Transcript reconciliation and full resume remain deferred.
+`DurableScheduler` began as an H6 foundation inside the H5 release. Polling materializes a stable pending trigger before external handling; commit removes a one-shot or advances recurrence. H6 recovery now preserves that pending identity across takeover without committing the consumer effect. This improves deduplication but does not make an external side effect exactly-once.
+
+## Transcript and recovery
+
+H6 introduces `TranscriptStore`, `RecoveryReducer` and `ResumeCoordinator` as separate roles. The Store owns append-only evidence and record identity. The reducer tolerates a partial JSONL tail, reports malformed middle records, terminates cycles/dangling parent traversal and derives a conservative message/effect/background view without mutating evidence. An attempted but uncommitted effect remains indeterminate and is reconciled instead of automatically retried.
+
+Normal resume keeps the session identity; fork mints new session/message/record identities and preserves source mapping without copying unresolved effect or background ownership. Orphaned background work creates a new supervised attempt. The implementation is an in-process, persistence-neutral state machine: filesystem/database durability, fsync/WAL, transactional outbox, process resurrection and distributed fencing remain adapter responsibilities.
+
+## Security and production governance
+
+H7-1 places a fail-closed envelope after capability and Permission decisions. `PolicyEngine` publishes an immutable revision; `SecurityExecutor` rechecks policy revision, worker identity, filesystem/network/process constraints and required Sandbox availability before invoking `SandboxPort`. Secrets are references in the control plane and values only at the trusted execution boundary. The fake port proves orchestration semantics, not OS isolation or publisher authenticity.
+
+H7-2 adds closed metadata telemetry, an observer-only export port, cumulative-to-delta attempt usage, versioned cost/evaluation records and an in-process tenant governor. Missing TTFT or price stays unknown. Reservations happen before work, count against capacity and enter a bounded per-tenant FIFO queue. Telemetry/export failure has no authority over AgentRuntime, conversation pairing or effects.
+
+H7-3 adds a revisioned `ReleaseController`. An immutable manifest binds binary, protocol range, readable/write schema, policy and feature revisions. Candidate readiness requires compatible workers and required dependencies; stable routing buckets enter monotonic canary stages only after an adequate SLI window. Drain rejects new work while preserving acquired ownership. Rollback changes routing/admission and never claims to undo Tool effects or Transcript records.
 
 ## Provider boundary
 
@@ -157,7 +181,7 @@ Provider failure produces a failed run while retaining previously committed inpu
 
 ## Observability
 
-`TraceRecorder` records correlation metadata: run/request/tool IDs, revisions, counts, status, turn and error category. Prompt text, tool input, tool output, HTTP body and authorization headers are deliberately excluded. User-visible `AgentEvent` is a separate stream because final assistant text is product output, not telemetry; failures in that observer are isolated and cannot break message pairing or own the Tool Loop.
+`TraceRecorder` records correlation metadata: run/request/tool IDs, revisions, counts, status, turn and error category. H7-2 extends this rule with closed telemetry variants, attempt identity, usage deltas, versioned price/evaluation records and numeric governance reports. Prompt text, tool input, tool output, HTTP body and authorization headers are deliberately excluded. User-visible `AgentEvent` remains a separate stream because final assistant text is product output, not telemetry; failures in any observer are isolated and cannot break message pairing or own the Tool Loop.
 
 ## Run channels
 
@@ -193,6 +217,11 @@ Implemented now:
 - transport-neutral MCP handshake, generation/revision, qualified tool snapshot, fail-closed refresh and explicit recovery policy;
 - separate WorkItem and RuntimeExecution owners with lease/heartbeat/reclaim/fencing and linked/detached cancellation;
 - team identity, acknowledged at-least-once mailbox, correlated shutdown and stable pending scheduler triggers;
+- append-only Transcript evidence, conservative recovery, normal/fork identity mapping, effect/background classification and pending-trigger takeover;
+- revisioned security policy, worker/capability constraints, trusted-boundary secret resolution and a fail-closed Sandbox port;
+- metadata-only telemetry, observer isolation, cumulative-to-delta usage, versioned cost/evaluation and tenant reservation/queue governance;
+- release manifest compatibility, readiness, stable canary, SLO advancement, worker drain and effect-aware rollback routing;
+- release-control demo and Docker/Compose reference deployment;
 - interactive/headless CLI, JSON and event output;
 - structured trace and budgeted lifecycle flush;
 - deterministic TypeScript tests and Python behavior-contract mirror.
@@ -200,11 +229,11 @@ Implemented now:
 Explicitly deferred:
 
 - Provider-specific SSE streaming assembly and Runtime streaming assistant/tool consumption;
-- external result storage, crash-durable Compact records and transcript resume;
+- external result storage, physical Transcript/Compact durability, fsync/WAL and automatic effect reconciliation;
 - persistent/vector memory, PII/DLP enforcement, distributed writers and automatic Runtime memory wiring;
 - filesystem Skill/Plugin discovery, marketplace fetch, component loading and automatic Runtime capability wiring;
 - official MCP transport/OAuth, Resource/Prompt adapters and automatic Runtime wiring;
 - process-backed Subagents/Teams, durable mailbox storage and distributed coordination;
-- transcript persistence, resume and crash recovery;
-- real Sandbox or distributed execution;
-- production OpenTelemetry, quota and cost governance.
+- real OS/container Sandbox, Vault/PKI and distributed policy delivery;
+- production OpenTelemetry transport, exact Provider billing and distributed quota reservation;
+- service discovery, durable rollout state, Kubernetes reconciliation, database migration, compensation and disaster recovery.

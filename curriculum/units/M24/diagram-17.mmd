@@ -1,0 +1,10 @@
+stateDiagram-v2
+  [*] --> Prepared: 写 effectId + idempotencyKey
+  Prepared --> Attempted: 调用外部系统前记录 attempt
+  Attempted --> Committed: 结果与业务提交证据已记录
+  Prepared --> PreparedRecovery: crash
+  Attempted --> Indeterminate: crash / timeout
+  Committed --> NoReplay: resume
+  PreparedRecovery --> DispatchPolicy: 尚无 attempt 证据
+  Indeterminate --> Reconcile: 查询外部系统或人工裁决
+  NoReplay --> [*]

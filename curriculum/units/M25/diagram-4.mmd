@@ -1,0 +1,9 @@
+flowchart TD
+  A{"平台受支持?"} -->|"否"| OFF["Sandbox inactive"]
+  A -->|"是"| B{"runtime dependency 完整?"}
+  B -->|"否"| OFF
+  B -->|"是"| C{"当前平台在 enabledPlatforms?"}
+  C -->|"否"| OFF
+  C -->|"是"| D{"sandbox.enabled = true?"}
+  D -->|"否"| DIS["用户没有启用"]
+  D -->|"是"| ON["Sandbox eligible"]

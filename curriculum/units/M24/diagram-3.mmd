@@ -1,0 +1,8 @@
+stateDiagram-v2
+  [*] --> Unmaterialized: Project 创建
+  Unmaterialized --> Unmaterialized: metadata / hook 进入 pendingEntries
+  Unmaterialized --> Materializing: 首条 user 或 assistant
+  Materializing --> Active: 确定 sessionFile 并释放 pendingEntries
+  Active --> Active: message / metadata 进入写队列
+  Active --> Flushed: 显式 flush 或 cleanup
+  Flushed --> Active: 后续仍可 append

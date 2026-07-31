@@ -1,0 +1,9 @@
+flowchart TD
+  FAIL["region/store failure"] --> DET["detect + stop unsafe admission"]
+  DET --> REST["restore transcript/work/eval/quota state"]
+  REST --> REPLAY["RecoveryReducer + ownership fencing"]
+  REPLAY --> IND{"effect indeterminate?"}
+  IND -->|"no"| RESUME["resume/requeue"]
+  IND -->|"yes"| INQ["idempotency inquiry / manual review"]
+  RESUME --> OPEN["restore traffic"]
+  INQ --> OPEN

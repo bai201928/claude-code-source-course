@@ -1,0 +1,9 @@
+flowchart LR
+  PH["Provider response headers"] --> PQ["provider quota state"]
+  REST["organization policy endpoint"] --> PL["feature allow/deny"]
+  REQ["one model request"] --> TB["output_config.task_budget\nmodel pacing hint"]
+  JOB["enterprise work item"] --> TG["tenant token/cost/concurrency reservation"]
+  PQ -.不同 owner.-> DEC["governed run"]
+  PL -.-> DEC
+  TB -.-> DEC
+  TG -.-> DEC

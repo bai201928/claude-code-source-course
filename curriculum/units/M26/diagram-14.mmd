@@ -1,0 +1,8 @@
+flowchart TD
+  RUN["completed run"] --> ART["controlled answer/evidence reference"]
+  ART --> J["evaluator"]
+  J --> REC["versioned metadata outcome"]
+  REC --> LED["EvaluationLedger"]
+  LED --> DASH["quality trend"]
+  LED --> ROLL["explicit rollout/policy decision"]
+  J -.不能直接回滚已发生 effect.-> RUN

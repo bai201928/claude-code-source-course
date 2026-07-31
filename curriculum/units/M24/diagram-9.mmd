@@ -1,0 +1,7 @@
+flowchart LR
+  RAW["append-only 原始 entries"] --> BOUNDARY["Compact/Snip 边界解释"]
+  BOUNDARY --> RELINK["preserved segment relink"]
+  BOUNDARY --> REMOVE["Snip removal"]
+  RELINK --> VIEW["恢复时消息图"]
+  REMOVE --> VIEW
+  VIEW --> LEAF["leaf + chain"]

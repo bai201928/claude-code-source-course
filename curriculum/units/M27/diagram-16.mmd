@@ -1,0 +1,7 @@
+flowchart LR
+  CI["trusted build"] --> SIG["signed artifact + SBOM"]
+  SIG --> MAN["immutable release manifest"]
+  MAN --> ADM["cluster admission / policy"]
+  ADM --> REG["worker attestation + registration"]
+  REG --> ROLL["revisioned rollout approval"]
+  ROLL --> AUD["metadata audit"]

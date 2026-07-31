@@ -1,0 +1,10 @@
+flowchart LR
+  ART["immutable artifact"] --> MAN["release manifest"]
+  MAN --> COMP["protocol/schema/policy compatibility"]
+  COMP --> REG["worker registration + readiness"]
+  REG --> CAN["staged canary routing"]
+  CAN --> SLO["SLI window / SLO guard"]
+  SLO -->|"pass"| NEXT["advance / promote"]
+  SLO -->|"fail"| RB["rollback routing"]
+  RB --> DR["drain new workers"]
+  DR --> REC["Transcript/queue/effect reconciliation"]

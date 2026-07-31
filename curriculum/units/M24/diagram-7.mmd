@@ -1,0 +1,7 @@
+flowchart LR
+  U1["u1"] --> A1["assistant block A\ntool_use t1"]
+  A1 --> A2["assistant block B\ntool_use t2\n同一 provider message.id"]
+  A1 --> TR1["tool_result t1"]
+  A2 --> TR2["tool_result t2"]
+  TR1 --> NEXT["下一轮消息"]
+  TR2 -. "并行 sibling" .-> NEXT

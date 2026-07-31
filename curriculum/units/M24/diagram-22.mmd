@@ -1,0 +1,9 @@
+flowchart TD
+  W["写入：record != flush != fsync"] --> J["JSONL：完整前缀可恢复，坏行会留缺口"]
+  J --> G["图：leaf + parent chain + parallel sibling"]
+  G --> P["协议：tool use/result 配对 + interruption"]
+  P --> O["所有权：各 store 分别 restore"]
+  O --> I["身份：Normal 接管，Fork 隔离"]
+  I --> B["后台：旧 process 变 orphan，新 attempt"]
+  B --> E["副作用：prepared / indeterminate / committed"]
+  E --> D["可靠性：idempotency + reconcile + explicit commit"]

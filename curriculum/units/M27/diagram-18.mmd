@@ -1,0 +1,11 @@
+flowchart TD
+  API["Spring API"] --> ADM["AdmissionService"]
+  ADM --> Q["WorkQueue"]
+  Q --> WR["WorkerRegistry lease"]
+  WR --> AR["AgentRuntime adapter"]
+  AR --> TX["Transcript/Effect transaction"]
+  TX --> OUT["Outbox"]
+  OUT --> OBS["OTel/Cost/Eval consumers"]
+  RC["ReleaseController"] --> WR
+  RC --> ADM
+  MIG["Flyway/Liquibase"] --> TX

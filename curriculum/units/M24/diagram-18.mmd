@@ -1,0 +1,9 @@
+flowchart TD
+  CRASH["进程恢复"] --> STATUS{"effect 最新状态"}
+  STATUS -->|"prepared"| READY["可交给 dispatcher 策略"]
+  STATUS -->|"attempted"| UNKNOWN["indeterminate"]
+  STATUS -->|"committed"| SKIP["禁止重复执行"]
+  UNKNOWN --> LOOKUP["按 idempotency key 查询外部事实"]
+  LOOKUP -->|"已成功"| COMMIT["补写 committed"]
+  LOOKUP -->|"明确未发生"| RETRY["创建新 attempt"]
+  LOOKUP -->|"仍未知"| HUMAN["人工/补偿流程"]

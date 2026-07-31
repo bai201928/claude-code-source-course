@@ -1,0 +1,11 @@
+flowchart LR
+  M["模型可见能力"] --> C["tool call"]
+  C --> P["Permission / Hook"]
+  P -->|"deny / ask"| STOP["不执行"]
+  P -->|"allow"| REV["Policy revision + worker identity"]
+  REV --> CAP["filesystem / network / process constraint"]
+  CAP --> EXT["extension provenance"]
+  EXT --> SEC["trusted secret resolution"]
+  SEC --> SB["Sandbox / worker boundary"]
+  SB --> FX["真实副作用"]
+  FX --> REP["metadata-only report"]

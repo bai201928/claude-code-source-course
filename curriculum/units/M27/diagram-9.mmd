@@ -1,0 +1,10 @@
+flowchart TD
+  W["candidate SLI window"] --> N{"samples enough?"}
+  N -->|"no"| HOLD["hold stage"]
+  N -->|"yes"| S{"success >= SLO?"}
+  S -->|"no"| HOLD
+  S -->|"yes"| L{"p95 <= SLO?"}
+  L -->|"no"| HOLD
+  L -->|"yes"| O{"drop/unknown <= SLO?"}
+  O -->|"no"| HOLD
+  O -->|"yes"| ADV["advance stage / promote"]

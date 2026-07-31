@@ -1,0 +1,8 @@
+flowchart LR
+  SRC["Marketplace source"] --> BL["blocklist first"]
+  BL --> KNOWN["strict known marketplace"]
+  KNOWN --> DL["download / cache"]
+  DL --> SCHEMA["schema + path validation"]
+  SCHEMA --> EN["enabledPlugins / delisted policy"]
+  EN --> LOAD["Plugin components"]
+  LOAD --> RUN["Hook / MCP / Skill execution"]

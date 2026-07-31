@@ -1,0 +1,10 @@
+flowchart TB
+  STORE["TranscriptStore"] --> REDUCER["RecoveryReducer"]
+  REDUCER --> VIEW["messages projection"]
+  REDUCER --> REPORT["metadata-only RecoveryReport"]
+  REDUCER --> EFFECTS["effect classifications"]
+  REDUCER --> ORPHANS["orphaned executions"]
+  COORD["ResumeCoordinator"] --> REDUCER
+  COORD --> NORMAL["Normal identity"]
+  COORD --> FORK["Fork identity mapping"]
+  SCHED["DurableScheduler state"] --> COORD

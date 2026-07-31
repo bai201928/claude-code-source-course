@@ -1,0 +1,8 @@
+flowchart TD
+  STORE["host secret storage"] -->|"ref lookup"| TRUST["trusted execution boundary"]
+  TRUST -->|"必要 env / config"| PROC["approved child process"]
+  MODEL["model-visible Skill / Agent content"] --> PLACE["sensitive placeholder only"]
+  STORE -. "不得注入真实值" .-> MODEL
+  TRUST --> REPORT["metadata-only report"]
+  REPORT --> LOG["trace / audit"]
+  PROC -. "不得回流明文" .-> REPORT

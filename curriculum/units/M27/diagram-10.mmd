@@ -1,0 +1,18 @@
+sequenceDiagram
+  participant SIG as SIGTERM / exit request
+  participant LB as Router / readiness
+  participant W as Worker
+  participant Q as Queue / WorkItem owner
+  participant T as Transcript / effect journal
+  participant O as Observer exporter
+  SIG->>LB: mark not-ready / stop new work
+  SIG->>W: enter draining
+  W->>Q: finish or release owned work explicitly
+  W->>T: flush critical state / recovery marker
+  W->>O: bounded telemetry flush
+  alt all work complete
+    W-->>SIG: drained
+  else grace deadline reached
+    W-->>T: leave indeterminate recovery evidence
+    W-->>SIG: force exit
+  end

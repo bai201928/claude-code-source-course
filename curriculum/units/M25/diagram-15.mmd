@@ -1,0 +1,22 @@
+classDiagram
+  class PolicyEngine {
+    -SecurityPolicy policy
+    +snapshot()
+    +replace(expectedRevision, draft)
+  }
+  class SecurityExecutor {
+    +execute(request, signal)
+  }
+  class SecretResolver {
+    <<interface>>
+    +resolve(ref)
+  }
+  class SandboxPort {
+    <<interface>>
+    +workerId
+    +isAvailable()
+    +execute(envelope, signal)
+  }
+  PolicyEngine --> SecurityExecutor
+  SecretResolver --> SecurityExecutor
+  SecurityExecutor --> SandboxPort

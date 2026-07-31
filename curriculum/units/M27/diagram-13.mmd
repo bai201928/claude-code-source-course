@@ -1,0 +1,15 @@
+flowchart TD
+  EDGE["CLI / API edge"] --> CFG["H1 config + secret edge"]
+  EDGE --> GOV["H7-2 tenant reservation"]
+  GOV --> Q["durable work queue adapter"]
+  Q --> RT["H2 AgentRuntime + ConversationStore"]
+  RT --> CTX["H3 Context / Compact / Instruction / Memory"]
+  RT --> EXT["H4 Hook / Permission / Extension / MCP"]
+  RT --> TEAM["H5 WorkItem / Runtime / Team / Mailbox"]
+  RT --> REC["H6 Transcript / Resume / Effect recovery"]
+  EXT --> SEC["H7-1 policy / secret / Sandbox port"]
+  RT --> OBS["H7-2 telemetry / usage / evaluation"]
+  REL["H7-3 release control"] --> Q
+  REL --> RT
+  REC --> STORE["durable stores"]
+  OBS --> OTel["external observability adapters"]

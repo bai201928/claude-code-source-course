@@ -1,0 +1,14 @@
+flowchart LR
+  U["一次用户交互"] --> I["interaction root"]
+  I --> A1["attempt 1 / retry"]
+  I --> A2["attempt 2 / fallback"]
+  A2 --> T["tool blocked + execution"]
+  A1 --> US["usage snapshots"]
+  A2 --> US
+  T --> EV["evaluation outcome"]
+  US --> COST["cost ledger"]
+  I --> TEL["metadata telemetry"]
+  COST --> GOV["tenant governor"]
+  EV --> GOV
+  TEL --> SLO["SLI / diagnosis"]
+  GOV --> NEXT["后续 admission / rollout"]

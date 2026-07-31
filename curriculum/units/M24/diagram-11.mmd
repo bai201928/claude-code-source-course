@@ -1,0 +1,10 @@
+flowchart TD
+  LAST["最后 turn-relevant message"] --> KIND{"类型"}
+  KIND -->|"assistant"| DONE["none / completed"]
+  KIND -->|"普通 user"| PROMPT["interrupted_prompt"]
+  KIND -->|"非终止 tool_result"| TURN["interrupted_turn"]
+  KIND -->|"attachment"| TURN
+  KIND -->|"terminal tool_result"| DONE
+  TURN --> META["追加 meta Continue user"]
+  PROMPT --> SENTINEL["在尾部 user 后插 assistant sentinel"]
+  META --> SENTINEL

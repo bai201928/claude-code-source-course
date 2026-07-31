@@ -1,0 +1,16 @@
+flowchart TD
+  S["merged settings"] --> N["sandbox.network.allowedDomains"]
+  S --> P["permissions allow / deny"]
+  P --> WF["WebFetch domain rules"]
+  P --> RW["Read / Edit path rules"]
+  N --> NC["runtime network allow / deny"]
+  WF --> NC
+  RW --> FC["runtime filesystem allow / deny"]
+  MW["managed-only switches"] --> NC
+  MW --> FC
+  PROT["settings / drop-ins / .claude skills"] --> DW["deny write"]
+  CWD["cwd / temp / additional dirs"] --> AW["allow roots"]
+  DW --> CFG["SandboxRuntimeConfig"]
+  AW --> CFG
+  NC --> CFG
+  FC --> CFG

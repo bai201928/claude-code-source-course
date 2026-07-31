@@ -1,0 +1,8 @@
+stateDiagram-v2
+  [*] --> Disabled: sandbox.enabled = false
+  [*] --> Requested: sandbox.enabled = true
+  Requested --> Active: platform + dependencies ready
+  Requested --> Unavailable: prerequisite missing
+  Unavailable --> WarnAndUnsandboxed: failIfUnavailable = false
+  Unavailable --> RefuseStartup: failIfUnavailable = true
+  Active --> WrappedExecution

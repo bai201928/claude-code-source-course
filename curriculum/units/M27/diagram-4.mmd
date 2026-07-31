@@ -1,0 +1,14 @@
+flowchart TD
+  R["ReleaseManifest"] --> B["binary identity"]
+  R --> P["protocol range"]
+  R --> RS["read schemas"]
+  R --> WS["write schema"]
+  R --> POL["policy revision"]
+  R --> FF["feature revision"]
+  W["worker registration"] --> CHECK{"exact compatibility check"}
+  B --> CHECK
+  P --> CHECK
+  RS --> CHECK
+  WS --> CHECK
+  POL --> CHECK
+  FF --> CHECK

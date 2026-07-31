@@ -1,0 +1,8 @@
+flowchart TD
+  C["candidate manifest"] --> F{"can read active writes?"}
+  F -->|"no"| BLOCK["prepare rejected"]
+  F -->|"yes"| B{"active can read candidate writes?"}
+  B -->|"no"| BLOCK
+  B -->|"yes"| P{"protocol overlap + same policy revision?"}
+  P -->|"no"| BLOCK
+  P -->|"yes"| READY["rollout may be prepared"]

@@ -1,0 +1,7 @@
+flowchart LR
+  subgraph Merge["普通 settings merge: 后者覆盖"]
+    U["user"] --> P["project"] --> L["local"] --> F["flag"] --> POL["policy"]
+  end
+  subgraph Source["managed source: 第一个可用来源获胜"]
+    R["remote"] --> HK["HKLM / plist"] --> MF["managed file + drop-ins"] --> HU["HKCU fallback"]
+  end

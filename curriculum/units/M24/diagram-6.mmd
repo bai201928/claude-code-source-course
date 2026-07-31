@@ -1,0 +1,10 @@
+flowchart TD
+  BYTES["JSONL bytes"] --> L1["完整行 1"]
+  BYTES --> L2["坏的中间行 2"]
+  BYTES --> L3["完整行 3"]
+  BYTES --> TAIL["半写尾行 4"]
+  L1 --> KEEP["保留"]
+  L2 --> DROP["跳过并报告"]
+  L3 --> KEEP
+  TAIL --> PARTIAL["忽略 partial tail"]
+  DROP --> RISK["可能产生 dangling parent"]
